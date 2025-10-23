@@ -165,125 +165,86 @@ spec:
 
 ---
 # =========================
-# DMN Web GUI (dmn-js editor) served from NGINX
-# Includes a "Publish" button -> posts to the publisher service.
+# Zeebe Play - Official Camunda 8 Web Modeler
+# Full-featured OSS GUI with modeling, deployment, and monitoring
 # =========================
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: dmn-gui
-  namespace: dmn
-data:
-  index.html: |
-    <!doctype html>
-    <html>
-    <head>
-      <meta charset="utf-8"/>
-      <title>DMN Editor (Single-User)</title>
-      <meta name="viewport" content="width=device-width,initial-scale=1"/>
-      <style>
-        html,body,#canvas{height:100%;margin:0}
-        #toolbar{padding:8px;display:flex;gap:8px;border-bottom:1px solid #ddd}
-        button,input{font-size:14px}
-        #status{margin-left:auto;color:#444}
-      </style>
-      <!-- dmn-js & dependencies from unpkg (OSS) -->
-      <script src="https://unpkg.com/dmn-js@14.5.0/dist/dmn-modeler.development.js"></script>
-      <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
-    </head>
-    <body>
-      <div id="toolbar">
-        <input type="file" id="file" accept=".dmn,application/xml"/>
-        <button id="new">New</button>
-        <button id="open">Open</button>
-        <button id="save">Save</button>
-        <button id="publish">Publish</button>
-        <span id="status">idle</span>
-      </div>
-      <div id="canvas"></div>
-      <script>
-        const modeler = new window.DmnJS({ container: '#canvas' });
-        const status = (t)=>document.getElementById('status').textContent=t;
-
-        const EMPTY_DMN = `<?xml version="1.0" encoding="UTF-8"?>
-        <definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/"
-          xmlns:feel="https://www.omg.org/spec/DMN/20191111/FEEL/"
-          id="definitions" name="dmn" namespace="https://example.local/dmn">
-          <decision id="decision" name="backup_action">
-            <decisionTable id="table" hitPolicy="FIRST">
-              <input id="i1"><inputExpression id="ie1" typeRef="number"><text>size_mb</text></inputExpression></input>
-              <input id="i2"><inputExpression id="ie2" typeRef="number"><text>last_backup_age_sec</text></inputExpression></input>
-              <output id="o1" name="action" typeRef="string"/>
-            </decisionTable>
-          </decision>
-        </definitions>`;
-
-        async function openXml(xml){ await modeler.importXML(xml); status('ready'); }
-
-        document.getElementById('new').onclick = ()=>openXml(EMPTY_DMN);
-
-        document.getElementById('open').onclick = ()=>document.getElementById('file').click();
-        document.getElementById('file').onchange = async (e)=>{
-          const f = e.target.files[0]; if(!f) return;
-          const xml = await f.text(); await openXml(xml);
-        };
-
-        document.getElementById('save').onclick = async ()=>{
-          const { xml } = await modeler.saveXML({ format: true });
-          const blob = new Blob([xml], { type: 'application/xml' });
-          window.saveAs(blob, 'model.dmn'); status('saved');
-        };
-
-        // Publish: POST multipart/form-data to the publisher reverse-proxy
-        document.getElementById('publish').onclick = async ()=>{
-          status('publishing…');
-          const { xml } = await modeler.saveXML({ format: true });
-          const fd = new FormData();
-          fd.append('deployment-name', 'dmn-gui-deployment');
-          fd.append('deploy-changed-only', 'true');
-          fd.append('model.dmn', new Blob([xml], { type: 'application/xml' }), 'model.dmn');
-          try{
-            const res = await fetch('/publisher/engine-rest/deployment/create', { method: 'POST', body: fd });
-            if(!res.ok){ throw new Error('HTTP '+res.status); }
-            status('published ✅');
-          }catch(err){ status('publish failed ❌ ' + err.message); }
-        };
-
-        // load an empty starter on first boot
-        openXml(EMPTY_DMN).catch(err=>status('error: '+err.message));
-      </script>
-    </body>
-    </html>
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: dmn-gui
+  name: zeebe-play
   namespace: dmn
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: dmn-gui }
+    matchLabels: { app: zeebe-play }
   template:
     metadata:
-      labels: { app: dmn-gui }
+      labels: { app: zeebe-play }
     spec:
       containers:
-        - name: nginx
-          image: nginx:1.25-alpine
-          ports: [{ containerPort: 80 }]
+        - name: zeebe-play
+          image: camunda/zeebe-play:8.6.0
+          ports:
+            - containerPort: 8080
+          env:
+            # Camunda Platform 7 Integration
+            - name: CAMUNDA_PLATFORM_URL
+              value: "http://camunda.dmn.svc.cluster.local:8080"
+            - name: CAMUNDA_PLATFORM_REST_URL
+              value: "http://publisher.dmn.svc.cluster.local:8080/engine-rest"
+            - name: CAMUNDA_PLATFORM_CLIENT_ID
+              value: "demo"
+            - name: CAMUNDA_PLATFORM_CLIENT_SECRET  
+              value: "demo"
+            # Enable all features
+            - name: SPRING_PROFILES_ACTIVE
+              value: "camunda-platform"
+            - name: ZEEBE_PLAY_IMPORT_ENABLED
+              value: "true"
+            - name: ZEEBE_PLAY_EXPORT_ENABLED
+              value: "true"
+            - name: ZEEBE_PLAY_DMN_ENABLED
+              value: "true"
+            - name: ZEEBE_PLAY_FORMS_ENABLED
+              value: "true"
+            # Performance tuning
+            - name: JAVA_OPTS
+              value: "-Xms256m -Xmx768m -XX:+UseG1GC"
+            - name: LOGGING_LEVEL_ORG_CAMUNDA
+              value: "INFO"
           volumeMounts:
-            - name: web
-              mountPath: /usr/share/nginx/html/index.html
-              subPath: index.html
+            - name: temp-storage
+              mountPath: /tmp
+            - name: models-storage
+              mountPath: /opt/zeebe-play/models
           readinessProbe:
-            httpGet: { path: /, port: 80 }
-            initialDelaySeconds: 3
-            periodSeconds: 5
+            httpGet: 
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 45
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "300m"
+            limits:
+              memory: "1.5Gi"
+              cpu: "1000m"
       volumes:
-        - name: web
-          configMap:
-            name: dmn-gui
+        - name: temp-storage
+          emptyDir: {}
+        - name: models-storage
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -291,10 +252,10 @@ metadata:
   name: dmn-gui
   namespace: dmn
 spec:
-  selector: { app: dmn-gui }
+  selector: { app: zeebe-play }
   ports:
     - name: http
-      port: 80
-      targetPort: 80
+      port: 8080
+      targetPort: 8080
   type: ClusterIP
 

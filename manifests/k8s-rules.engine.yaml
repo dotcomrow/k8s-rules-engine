@@ -243,7 +243,7 @@ spec:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: job-status-reader
+  name: job-status-reader-drools
   namespace: vault
 rules:
   - apiGroups: ["batch"]
@@ -268,7 +268,7 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: job-status-reader
+  name: job-status-reader-drools
 ---
 
 apiVersion: v1

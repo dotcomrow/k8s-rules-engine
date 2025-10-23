@@ -1,121 +1,952 @@
 # =========================
-# Namespace
+# Drools/Kogito Rules Engine Platform
+# Complete business rules management and execution platform
 # =========================
+
+# =========================
+# Vault and YugabyteDB Initialization Jobs
+# =========================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: copy-drools-vault-root-token
+  namespace: vault
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: default
+      restartPolicy: Never
+      containers:
+        - name: copy-secret
+          image: alpine/k8s:1.31.4
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "200m", memory: "256Mi" }
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              echo "🔁 Copying 'vault-root-token' from vault → drools..."
+              kubectl get secret vault-root-token -n vault -o yaml | \
+                sed 's/namespace: vault/namespace: drools/' | \
+                kubectl apply -f -
+              echo "✅ Secret copied successfully."
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: drools-yugabyte-config
+  namespace: vault
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: "disabled"
+    spec:
+      restartPolicy: Never
+      serviceAccountName: default
+      volumes:
+        - name: root-token
+          secret:
+            secretName: vault-root-token
+      containers:
+        - name: setup-role
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              #!/bin/sh
+              set -eu
+
+              PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
+              PGPORT=5433
+              DB=drools
+              ROLE_GROUP=drools
+              ROLE_OWNER=drools_app
+              VAULTADMIN_USER=vaultadmin
+
+              apk add --no-cache postgresql15-client jq netcat-openbsd curl
+
+              export PATH="$PATH:/vault-bin"
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+
+              while [ ! -f /vault-token/VAULT_TOKEN ]; do
+                echo "🔁 Waiting for Vault token file..."
+                sleep 2
+              done
+              export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+
+              echo "🧩 Ensuring KV v2 at 'secret/'..."
+              while :; do
+                # already KVv2?
+                if vault secrets list -format=json 2>/dev/null \
+                  | jq -e '."secret/".type=="kv" and ."secret/".options.version=="2"' >/dev/null; then
+                  echo "✅ 'secret/' is KVv2"
+                  break
+                fi
+
+                # path exists but not KVv2 → bail
+                if vault secrets list -format=json 2>/dev/null \
+                  | jq -e 'has("secret/")' >/dev/null; then
+                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."
+                  exit 1
+                fi
+
+                # try to enable KVv2; if it works, we're done; otherwise, retry after a short pause
+                vault secrets enable -path=secret -version=2 kv && break
+
+                sleep 2
+              done
+
+              echo "🔐 Seeding Drools admin creds at secret/drools/admin (if missing)..."
+              if ! vault kv get -format=json secret/drools/admin >/dev/null 2>&1; then
+                PASS="$(tr -dc 'A-Za-z0-9@#%^+=_' </dev/urandom | head -c 32)"
+                vault kv put secret/drools/admin username=admin password="$PASS"
+                echo "✅ Seeded admin secret at secret/drools/admin"
+              else
+                echo "✅ Admin secret already present"
+              fi
+
+              echo "🔐 Seeding KIE Server user creds at secret/drools/kie-user (if missing)..."
+              if ! vault kv get -format=json secret/drools/kie-user >/dev/null 2>&1; then
+                PASS="$(tr -dc 'A-Za-z0-9@#%^+=_' </dev/urandom | head -c 32)"
+                vault kv put secret/drools/kie-user username=kieserver password="$PASS"
+                echo "✅ Seeded kie-user secret at secret/drools/kie-user"
+              else
+                echo "✅ KIE user secret already present"
+              fi
+
+              until getent hosts "$PGHOST" >/dev/null 2>&1; do echo "🔄 Waiting for DNS for $PGHOST..."; sleep 3; done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
+              echo "✅ Yugabyte reachable"
+
+              echo "🔐 Waiting for secret/${VAULTADMIN_USER} to exist in Vault..."
+              VAULTADMIN_PASS=""
+              while :; do
+                OUT="$(vault kv get -format=json "secret/${VAULTADMIN_USER}" 2>/dev/null || true)"
+                if [ -n "${OUT}" ]; then
+                  VAULTADMIN_PASS="$(printf '%s' "$OUT" | jq -r '.data.data.password // .data.data.value // empty')"
+                  if [ -n "${VAULTADMIN_PASS}" ] && [ "${VAULTADMIN_PASS}" != "null" ]; then
+                    echo "✅ Found secret/${VAULTADMIN_USER}"
+                    break
+                  fi
+                fi
+                echo "⏳ secret/${VAULTADMIN_USER} not ready yet; retrying in 5s..."
+                sleep 5
+              done
+              export PGPASSWORD="$VAULTADMIN_PASS"
+
+              while :; do
+                DB_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)"
+                [ "$DB_EXISTS" = "1" ] && { echo "✅ DB '$DB' exists"; break; }
+                echo "📦 Creating DB '$DB' owned by $VAULTADMIN_USER..."
+                createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null && { echo "✅ DB created"; break; }
+                echo "🔁 Retry create DB in 3s..."; sleep 3
+              done
+
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
+              DO \$\$
+              BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROLE_GROUP}') THEN
+                  CREATE ROLE ${ROLE_GROUP} NOLOGIN;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROLE_OWNER}') THEN
+                  CREATE ROLE ${ROLE_OWNER} LOGIN INHERIT;
+                END IF;
+              END
+              \$\$;
+              GRANT ${ROLE_GROUP} TO ${ROLE_OWNER};
+              GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};
+              EOSQL
+
+              # Create schemas for different Drools components
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
+              CREATE SCHEMA IF NOT EXISTS drools AUTHORIZATION ${ROLE_OWNER};
+              CREATE SCHEMA IF NOT EXISTS kie_server AUTHORIZATION ${ROLE_OWNER};
+              CREATE SCHEMA IF NOT EXISTS kogito AUTHORIZATION ${ROLE_OWNER};
+              CREATE SCHEMA IF NOT EXISTS data_index AUTHORIZATION ${ROLE_OWNER};
+              ALTER SCHEMA drools OWNER TO ${ROLE_OWNER};
+              ALTER SCHEMA kie_server OWNER TO ${ROLE_OWNER};
+              ALTER SCHEMA kogito OWNER TO ${ROLE_OWNER};
+              ALTER SCHEMA data_index OWNER TO ${ROLE_OWNER};
+              ALTER ROLE ${ROLE_OWNER} SET search_path = drools,kie_server,kogito,data_index,public;
+              GRANT CONNECT ON DATABASE ${DB} TO ${ROLE_OWNER};
+              EOSQL
+
+              # Set up permissions for each schema
+              for schema in drools kie_server kogito data_index; do
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
+              SET ROLE ${ROLE_OWNER};
+              GRANT USAGE, CREATE ON SCHEMA ${schema} TO ${ROLE_GROUP};
+              GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA ${schema} TO ${ROLE_GROUP};
+              GRANT USAGE, SELECT                     ON ALL SEQUENCES IN SCHEMA ${schema} TO ${ROLE_GROUP};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema}
+                GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES   TO ${ROLE_GROUP};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema}
+                GRANT USAGE, SELECT                ON SEQUENCES TO ${ROLE_GROUP};
+              GRANT USAGE, CREATE ON SCHEMA ${schema} TO ${VAULTADMIN_USER};
+              GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA ${schema} TO ${VAULTADMIN_USER};
+              GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ${schema} TO ${VAULTADMIN_USER};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema} GRANT ALL ON TABLES    TO ${VAULTADMIN_USER};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema} GRANT ALL ON SEQUENCES TO ${VAULTADMIN_USER};
+              RESET ROLE;
+              EOSQL
+              done
+
+              echo "✅ Schemas & privileges prepared for Drools components"
+
+              if ! vault secrets list -format=json | jq -e 'has("yugabyte-db/")' >/dev/null 2>&1; then
+                vault secrets enable -path=yugabyte-db database
+                echo "✅ Enabled database secrets engine"
+              fi
+
+              # Create static role with automatic password rotation
+              vault write yugabyte-db/static-roles/drools-app \
+                db_name="yugabyte" \
+                username="${ROLE_OWNER}" \
+                rotation_statements="ALTER ROLE \"{{name}}\" WITH PASSWORD '{{password}}';" \
+                rotation_period="24h"
+
+              echo "✅ Configured Vault database connection and static role"
+
+              vault policy write "drools" - <<'EOF'
+              path "yugabyte-db/static-creds/drools-app"           { capabilities = ["read"] }
+              path "secret/data/drools/admin"                      { capabilities = ["read"] }
+              path "secret/data/drools/kie-user"                   { capabilities = ["read"] }
+              path "secret/data/vaultadmin"                        { capabilities = ["read"] }
+              EOF
+
+              vault write auth/kubernetes/role/drools \
+                bound_service_account_names="drools-workbench,drools-kie-server,drools-kogito-decisions,drools-kogito-jobs,drools-kogito-data-index,drools-rules-service,drools-api-gateway" \
+                bound_service_account_namespaces="drools" \
+                policies="drools" \
+                ttl="48h"
+
+              CREDS_JSON="$(vault read -format=json yugabyte-db/static-creds/drools-app)"
+              DB_USER="$(printf '%s' "$CREDS_JSON" | jq -r .data.username)"
+              DB_PASS="$(printf '%s' "$CREDS_JSON" | jq -r .data.password)"
+              export PGPASSWORD="$DB_PASS"
+              echo "🔎 Sanity check as \$DB_USER=$DB_USER"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB" -c "SELECT current_user, current_schema();"
+
+              echo "🎉 Drools DB prepared; Vault static role + policy + K8s binding ready."
+          volumeMounts:
+            - name: root-token
+              mountPath: /vault-token
+              readOnly: true
+          resources:
+            requests: { cpu: "50m",  memory: "64Mi" }
+            limits:   { cpu: "200m", memory: "256Mi" }
+---
+# RBAC for initialization jobs
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: job-status-reader
+  namespace: vault
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: job-status-reader-for-drools
+  namespace: vault
+subjects:
+  - kind: ServiceAccount
+    name: drools-workbench
+    namespace: drools
+  - kind: ServiceAccount
+    name: drools-kie-server
+    namespace: drools
+  - kind: ServiceAccount
+    name: drools-kogito-decisions
+    namespace: drools
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: job-status-reader
+---
+
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: dmn
+  name: drools
+  labels:
+    name: drools-rules-engine
+  annotations:
+    linkerd.io/inject: enabled
+    field.cattle.io/projectId: local:applications
+    scheduler.alpha.kubernetes.io/node-selector: "dedicated=srvr-node"
+
+---
+# Service Accounts for Vault authentication
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-workbench
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-kie-server
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-kogito-decisions
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-kogito-jobs
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-kogito-data-index
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-rules-service
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-api-gateway
+  namespace: drools
 
 ---
 # =========================
-# Camunda 7 "Run" (DMN engine + REST)
-# Community/OSS image. Exposes /engine-rest.
+# KIE Workbench - Web Authoring and Deployment GUI
+# Full-featured business rules authoring environment with Vault integration
 # =========================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: camunda-run
-  namespace: dmn
+  name: kie-workbench
+  namespace: drools
+  labels:
+    app: kie-workbench
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: camunda-run }
+    matchLabels:
+      app: kie-workbench
   template:
     metadata:
-      labels: { app: camunda-run }
+      labels:
+        app: kie-workbench
+      annotations:
+        # Vault agent for secret files
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "drools"
+        vault.hashicorp.com/agent-init-first: "true"
+        vault.hashicorp.com/agent-pre-populate: "true"
+
+        # DB creds (static role)
+        vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/drools-app"
+        vault.hashicorp.com/agent-inject-template-db-username: |
+          {{- with secret "yugabyte-db/static-creds/drools-app" -}}{{ .Data.username }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-db-password: "yugabyte-db/static-creds/drools-app"
+        vault.hashicorp.com/agent-inject-template-db-password: |
+          {{- with secret "yugabyte-db/static-creds/drools-app" -}}{{ .Data.password }}{{- end -}}
+
+        # Admin creds
+        vault.hashicorp.com/agent-inject-secret-drools-admin: "secret/data/drools/admin"
+        vault.hashicorp.com/agent-inject-template-drools-admin: |
+          {{- with secret "secret/data/drools/admin" -}}
+          ADMIN_USER={{ .Data.data.username }}
+          ADMIN_PASS={{ .Data.data.password }}
+          {{- end -}}
+
+        # KIE Server user creds
+        vault.hashicorp.com/agent-inject-secret-kie-user: "secret/data/drools/kie-user"
+        vault.hashicorp.com/agent-inject-template-kie-user: |
+          {{- with secret "secret/data/drools/kie-user" -}}
+          KIE_SERVER_USER={{ .Data.data.username }}
+          KIE_SERVER_PASSWORD={{ .Data.data.password }}
+          {{- end -}}
+
+        # Linkerd: allow direct Postgres/Vault egress from this pod
+        config.linkerd.io/skip-outbound-ports: "8200,5433"
+
+        # Teleport service annotation
+        teleport.dev/name: "drools-workbench"
     spec:
+      serviceAccountName: drools-workbench
+      initContainers:
+        - name: wait-for-config-job
+          image: alpine/k8s:1.31.4
+          command: ["/bin/sh","-lc"]
+          args:
+            - |
+              echo "Waiting for Job vault/drools-yugabyte-config to complete (will retry until ready)..."
+              while true; do
+                if ! kubectl -n vault get job drools-yugabyte-config >/dev/null 2>&1; then
+                  echo "  └─ job not found yet..."
+                  sleep 5
+                  continue
+                fi
+                SUCC="$(kubectl -n vault get job drools-yugabyte-config -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
+                if [ "$SUCC" -ge 1 ] 2>/dev/null; then
+                  echo "✅ DB bootstrap job is complete."
+                  break
+                fi
+                if kubectl -n vault wait --for=condition=complete job/drools-yugabyte-config --timeout=10s >/dev/null 2>&1; then
+                  echo "✅ DB bootstrap job is complete."
+                  break
+                fi
+                FAIL="$(kubectl -n vault get job drools-yugabyte-config -o jsonpath='{.status.failed}' 2>/dev/null || true)";  FAIL="${FAIL:-0}"
+                ACTV="$(kubectl -n vault get job drools-yugabyte-config -o jsonpath='{.status.active}' 2>/dev/null || true)";  ACTV="${ACTV:-0}"
+                echo "  └─ still waiting... succeeded=${SUCC} failed=${FAIL} active=${ACTV}"
+                sleep 5
+              done
       containers:
-        - name: camunda
-          image: camunda/camunda-bpm-platform:run-7.20.0
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 8080
-          env:
-            # Optional: bump heap if you like
-            - name: JAVA_OPTS
-              value: "-Xms256m -Xmx512m"
-          readinessProbe:
-            httpGet: 
-              path: /engine-rest/engine
-              port: 8080
-            initialDelaySeconds: 30
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
-          livenessProbe:
-            httpGet: 
-              path: /engine-rest/engine
-              port: 8080
-            initialDelaySeconds: 60
-            periodSeconds: 30
-            timeoutSeconds: 5
-            failureThreshold: 3
+      - name: kie-workbench
+        image: jboss/kie-wb-showcase:7.74.1.Final
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 8001
+          name: debug
+        - containerPort: 9418
+          name: git
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -euo pipefail
+            
+            # Source admin and kie-user credentials from Vault
+            source /vault/secrets/drools-admin
+            source /vault/secrets/kie-user
+            
+            # Set database credentials from Vault
+            export KIE_CONNECTION_USER="$(cat /vault/secrets/db-username)"
+            export KIE_CONNECTION_PASSWORD="$(cat /vault/secrets/db-password)"
+            
+            echo "🚀 Starting KIE Workbench with Vault credentials..."
+            exec /opt/jboss/tools/docker-entrypoint.sh
+        env:
+        - name: JAVA_OPTS
+          value: "-Xms512m -Xmx2048m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=512m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"
+        - name: KIE_CONNECTION_URL
+          value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/drools?currentSchema=drools"
+        - name: KIE_CONNECTION_DRIVER_CLASS
+          value: "org.postgresql.Driver"
+        - name: KIE_SERVER_LOCATION
+          value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server"
+        volumeMounts:
+        - name: git-storage
+          mountPath: /opt/jboss/.niogit
+        readinessProbe:
+          httpGet:
+            path: /business-central
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 5
+        livenessProbe:
+          httpGet:
+            path: /business-central
+            port: 8080
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "3Gi"
+            cpu: "2000m"
+      volumes:
+      - name: git-storage
+        emptyDir: {}
+
 ---
+# =========================
+# Teleport Service - KIE Workbench (Business Rules Authoring)
+# =========================
 apiVersion: v1
 kind: Service
 metadata:
-  name: camunda
-  namespace: dmn
+  name: kie-workbench
+  namespace: drools
+  annotations:
+    teleport.dev/name: "drools-workbench"
+    teleport.dev/protocol: "http"
+    teleport.dev/public_addr: "workbench.drools.yourdomain.com"
+    teleport.dev/labels: "environment=production,service=rules-authoring"
+  labels:
+    app.kubernetes.io/name: kie-workbench
+    app.kubernetes.io/component: authoring
+    teleport.dev/app: "drools-workbench"
 spec:
-  selector: { app: camunda-run }
+  selector:
+    app: kie-workbench
   ports:
-    - name: http
-      port: 8080
-      targetPort: 8080
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: git
+    port: 9418
+    targetPort: 9418
+    protocol: TCP
   type: ClusterIP
 
 ---
 # =========================
-# NGINX reverse-proxy "publisher"
-# Adds CORS and proxies /engine-rest to the engine
-# so the browser GUI can deploy DMN directly.
+# KIE Server - Embeddable Rules Runtime
+# Execution server for business rules and decisions
+# =========================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kie-server
+  namespace: drools
+  labels:
+    app: kie-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kie-server
+  template:
+    metadata:
+      labels:
+        app: kie-server
+      annotations:
+        # Vault agent for secret files
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "drools"
+        vault.hashicorp.com/agent-init-first: "true"
+        vault.hashicorp.com/agent-pre-populate: "true"
+
+        # Admin creds
+        vault.hashicorp.com/agent-inject-secret-drools-admin: "secret/data/drools/admin"
+        vault.hashicorp.com/agent-inject-template-drools-admin: |
+          {{- with secret "secret/data/drools/admin" -}}
+          ADMIN_USER={{ .Data.data.username }}
+          ADMIN_PASS={{ .Data.data.password }}
+          {{- end -}}
+
+        # KIE Server user creds
+        vault.hashicorp.com/agent-inject-secret-kie-user: "secret/data/drools/kie-user"
+        vault.hashicorp.com/agent-inject-template-kie-user: |
+          {{- with secret "secret/data/drools/kie-user" -}}
+          KIE_SERVER_USER={{ .Data.data.username }}
+          KIE_SERVER_PASSWORD={{ .Data.data.password }}
+          {{- end -}}
+
+        # Linkerd: allow direct Vault egress
+        config.linkerd.io/skip-outbound-ports: "8200"
+
+        # Teleport service annotation
+        teleport.dev/name: "drools-kie-server"
+    spec:
+      serviceAccountName: drools-kie-server
+      initContainers:
+        - name: wait-for-config-job
+          image: alpine/k8s:1.31.4
+          command: ["/bin/sh","-lc"]
+          args:
+            - |
+              echo "Waiting for Job vault/drools-yugabyte-config to complete..."
+              while true; do
+                if ! kubectl -n vault get job drools-yugabyte-config >/dev/null 2>&1; then
+                  echo "  └─ job not found yet..."
+                  sleep 5
+                  continue
+                fi
+                SUCC="$(kubectl -n vault get job drools-yugabyte-config -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
+                if [ "$SUCC" -ge 1 ] 2>/dev/null; then
+                  echo "✅ DB bootstrap job is complete."
+                  break
+                fi
+                sleep 5
+              done
+      containers:
+      - name: kie-server
+        image: jboss/kie-server-showcase:7.74.1.Final
+        ports:
+        - containerPort: 8080
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -euo pipefail
+            
+            # Source credentials from Vault
+            source /vault/secrets/drools-admin
+            source /vault/secrets/kie-user
+            
+            # Export credentials for KIE Server
+            export KIE_SERVER_CONTROLLER_USER="$ADMIN_USER"
+            export KIE_SERVER_CONTROLLER_PWD="$ADMIN_PASS"
+            export KIE_SERVER_USER="$KIE_SERVER_USER"
+            export KIE_SERVER_PWD="$KIE_SERVER_PASSWORD"
+            export KIE_MAVEN_REPO_USER="$ADMIN_USER"
+            export KIE_MAVEN_REPO_PWD="$ADMIN_PASS"
+            
+            echo "🚀 Starting KIE Server with Vault credentials..."
+            exec /opt/jboss/tools/docker-entrypoint.sh
+        env:
+        - name: JAVA_OPTS
+          value: "-Xms256m -Xmx1024m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=256m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"
+        - name: KIE_SERVER_ID
+          value: "kie-server"
+        - name: KIE_SERVER_LOCATION
+          value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server"
+        - name: KIE_SERVER_CONTROLLER
+          value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller"
+        - name: KIE_MAVEN_REPO
+          value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/maven2"
+        readinessProbe:
+          httpGet:
+            path: /kie-server/services/rest/server
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /kie-server/services/rest/server
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "300m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# =========================
+# Teleport Service - KIE Server (Rules Execution Runtime)
+# =========================
+apiVersion: v1
+kind: Service
+metadata:
+  name: kie-server
+  namespace: drools
+  annotations:
+    teleport.dev/name: "drools-kie-server"
+    teleport.dev/protocol: "http"
+    teleport.dev/public_addr: "kie-server.drools.yourdomain.com"
+    teleport.dev/labels: "environment=production,service=rules-execution"
+  labels:
+    app.kubernetes.io/name: kie-server
+    app.kubernetes.io/component: runtime
+    teleport.dev/app: "drools-kie-server"
+spec:
+  selector:
+    app: kie-server
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP
+
+---
+# =========================
+# Kogito Decision Service - Modern Cloud-Native Rules Service
+# Quarkus-based microservice for decision execution
+# =========================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kogito-decision-service
+  namespace: drools
+  labels:
+    app: kogito-decision-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kogito-decision-service
+  template:
+    metadata:
+      labels:
+        app: kogito-decision-service
+    spec:
+      containers:
+      - name: kogito-decision-service
+        image: quay.io/kiegroup/kogito-decisions-quarkus:1.44.1.Final
+        ports:
+        - containerPort: 8080
+        env:
+        - name: QUARKUS_HTTP_PORT
+          value: "8080"
+        - name: QUARKUS_HTTP_HOST
+          value: "0.0.0.0"
+        - name: KOGITO_SERVICE_URL
+          value: "http://kogito-decision-service.drools.svc.cluster.local:8080"
+        - name: KOGITO_JOBS_SERVICE_URL
+          value: "http://kogito-jobs-service.drools.svc.cluster.local:8080"
+        - name: KOGITO_DATAINDEX_HTTP_URL
+          value: "http://kogito-data-index.drools.svc.cluster.local:8080"
+        - name: JAVA_OPTIONS
+          value: "-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager"
+        readinessProbe:
+          httpGet:
+            path: /q/health/ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /q/health/live
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "800m"
+
+---
+# =========================
+# Teleport Service - Kogito Decision Service (Cloud-Native Decision API)
+# =========================
+apiVersion: v1
+kind: Service
+metadata:
+  name: kogito-decision-service
+  namespace: drools
+  annotations:
+    teleport.dev/name: "drools-kogito-decisions"
+    teleport.dev/protocol: "http"
+    teleport.dev/public_addr: "kogito.drools.yourdomain.com"
+    teleport.dev/labels: "environment=production,service=decision-api"
+  labels:
+    app.kubernetes.io/name: kogito-decision-service
+    app.kubernetes.io/component: decision-api
+    teleport.dev/app: "drools-kogito-decisions"
+spec:
+  selector:
+    app: kogito-decision-service
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP
+
+---
+# =========================
+# NGINX API Gateway
+# Reverse proxy with CORS for all Drools/Kogito services
+# Provides unified API access and web interface routing
 # =========================
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: publisher-nginx-conf
-  namespace: dmn
+  name: api-gateway-nginx-conf
+  namespace: drools
 data:
   nginx.conf: |
-    worker_processes  1;
-    events { worker_connections  1024; }
+    worker_processes  auto;
+    events { 
+      worker_connections  1024;
+      use epoll;
+      multi_accept on;
+    }
+    
     http {
-      client_max_body_size 20m;
+      include       /etc/nginx/mime.types;
+      default_type  application/octet-stream;
+      
+      # Logging
+      log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for" '
+                      'rt=$request_time uct="$upstream_connect_time" '
+                      'uht="$upstream_header_time" urt="$upstream_response_time"';
+      
+      access_log /var/log/nginx/access.log main;
+      error_log /var/log/nginx/error.log warn;
+      
+      # Performance settings
+      sendfile on;
+      tcp_nopush on;
+      tcp_nodelay on;
+      keepalive_timeout 65;
+      client_max_body_size 50m;
+      client_body_timeout 60s;
+      client_header_timeout 60s;
+      
+      # Gzip compression
+      gzip on;
+      gzip_vary on;
+      gzip_min_length 1000;
+      gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+      
+      # Upstream definitions
+      upstream kie_workbench {
+        server kie-workbench.drools.svc.cluster.local:8080;
+        keepalive 32;
+      }
+      
+      upstream kie_server {
+        server kie-server.drools.svc.cluster.local:8080;
+        keepalive 32;
+      }
+      
+      upstream kogito_decision {
+        server kogito-decision-service.drools.svc.cluster.local:8080;
+        keepalive 32;
+      }
+      
       server {
         listen 8080;
+        server_name localhost;
         
-        # CORS preflight handling
-        location / {
-          if ($request_method = OPTIONS) {
-            add_header 'Access-Control-Allow-Origin' '*' always;
-            add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
-            add_header 'Access-Control-Allow-Headers' '*' always;
-            add_header 'Access-Control-Max-Age' 3600 always;
-            return 204;
-          }
-          return 404;
+        # Security headers
+        add_header X-Frame-Options DENY always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        
+        # CORS configuration
+        set $cors_origin "";
+        set $cors_creds "false";
+        set $cors_headers "Authorization,Content-Type,Accept,Origin,User-Agent,DNT,Cache-Control,X-Mx-ReqToken,Keep-Alive,X-Requested-With,If-Modified-Since,X-KIE-ContentType";
+        set $cors_methods "GET,POST,PUT,DELETE,OPTIONS,PATCH";
+        
+        if ($http_origin = '') {
+          set $cors_origin "*";
         }
         
-        location /engine-rest/ {
-          # Handle CORS preflight for this location
-          if ($request_method = OPTIONS) {
-            add_header 'Access-Control-Allow-Origin' '*' always;
-            add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
-            add_header 'Access-Control-Allow-Headers' '*' always;
-            add_header 'Access-Control-Max-Age' 3600 always;
-            return 204;
-          }
+        if ($http_origin != '') {
+          set $cors_origin $http_origin;
+          set $cors_creds "true";
+        }
+        
+        # Global CORS preflight handling
+        if ($request_method = OPTIONS) {
+          add_header Access-Control-Allow-Origin $cors_origin always;
+          add_header Access-Control-Allow-Credentials $cors_creds always;
+          add_header Access-Control-Allow-Methods $cors_methods always;
+          add_header Access-Control-Allow-Headers $cors_headers always;
+          add_header Access-Control-Max-Age 3600 always;
+          add_header Content-Length 0 always;
+          add_header Content-Type text/plain always;
+          return 204;
+        }
+        
+        # Root - redirect to KIE Workbench
+        location = / {
+          return 302 /business-central/;
+        }
+        
+        # KIE Workbench - Business rules authoring interface
+        location /business-central/ {
+          proxy_pass http://kie_workbench/business-central/;
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_read_timeout 300s;
+          proxy_connect_timeout 60s;
+          proxy_send_timeout 60s;
           
-          proxy_pass http://camunda.dmn.svc.cluster.local:8080/engine-rest/;
+          # CORS headers
+          add_header Access-Control-Allow-Origin $cors_origin always;
+          add_header Access-Control-Allow-Credentials $cors_creds always;
+          add_header Access-Control-Expose-Headers "Content-Disposition" always;
+        }
+        
+        # KIE Server REST API - Rules execution endpoint
+        location /kie-server/ {
+          proxy_pass http://kie_server/kie-server/;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
-          add_header 'Access-Control-Allow-Origin' '*' always;
-          add_header 'Access-Control-Expose-Headers' '*' always;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          
+          # CORS headers
+          add_header Access-Control-Allow-Origin $cors_origin always;
+          add_header Access-Control-Allow-Credentials $cors_creds always;
+          add_header Access-Control-Expose-Headers "X-KIE-ContentType" always;
         }
         
-        location = /healthz { 
+        # Kogito Decision Service - Cloud-native decision API
+        location /decisions/ {
+          proxy_pass http://kogito_decision/;
+          proxy_http_version 1.1;
+          proxy_set_header Connection "";
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          
+          # CORS headers
+          add_header Access-Control-Allow-Origin $cors_origin always;
+          add_header Access-Control-Allow-Credentials $cors_creds always;
+        }
+        
+        # Health check endpoints
+        location = /health {
+          access_log off;
           add_header Content-Type text/plain always;
-          return 200 'ok'; 
+          return 200 'healthy';
+        }
+        
+        location = /ready {
+          access_log off;
+          add_header Content-Type text/plain always;
+          return 200 'ready';
+        }
+        
+        # API documentation and OpenAPI
+        location /api/docs {
+          proxy_pass http://kogito_decision/q/swagger-ui/;
+          proxy_http_version 1.1;
+          proxy_set_header Connection "";
+          proxy_set_header Host $host;
+          
+          add_header Access-Control-Allow-Origin $cors_origin always;
+        }
+        
+        location /api/openapi {
+          proxy_pass http://kogito_decision/q/openapi;
+          proxy_http_version 1.1;
+          proxy_set_header Connection "";
+          proxy_set_header Host $host;
+          
+          add_header Access-Control-Allow-Origin $cors_origin always;
+          add_header Content-Type application/json always;
         }
       }
     }
@@ -123,139 +954,436 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: publisher
-  namespace: dmn
+  name: api-gateway
+  namespace: drools
+  labels:
+    app: api-gateway
 spec:
-  replicas: 1
+  replicas: 2
   selector:
-    matchLabels: { app: publisher }
+    matchLabels:
+      app: api-gateway
   template:
     metadata:
-      labels: { app: publisher }
+      labels:
+        app: api-gateway
     spec:
       containers:
-        - name: nginx
-          image: nginx:1.25-alpine
-          ports: [{ containerPort: 8080 }]
-          volumeMounts:
-            - name: conf
-              mountPath: /etc/nginx/nginx.conf
-              subPath: nginx.conf
-          readinessProbe:
-            httpGet: { path: /healthz, port: 8080 }
-            initialDelaySeconds: 3
-            periodSeconds: 5
+      - name: nginx
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
       volumes:
-        - name: conf
-          configMap:
-            name: publisher-nginx-conf
+      - name: nginx-config
+        configMap:
+          name: api-gateway-nginx-conf
+
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: publisher
-  namespace: dmn
+  name: api-gateway
+  namespace: drools
 spec:
-  selector: { app: publisher }
+  selector:
+    app: api-gateway
   ports:
-    - name: http
-      port: 8080
-      targetPort: 8080
+  - name: http
+    port: 8080
+    targetPort: 8080
   type: ClusterIP
 
 ---
 # =========================
-# Zeebe Play - Official Camunda 8 Web Modeler
-# Full-featured OSS GUI with modeling, deployment, and monitoring
+# Kogito Jobs Service - Async Job Processing
+# Handles scheduled and delayed rule executions
 # =========================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: zeebe-play
-  namespace: dmn
+  name: kogito-jobs-service
+  namespace: drools
+  labels:
+    app: kogito-jobs-service
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: zeebe-play }
+    matchLabels:
+      app: kogito-jobs-service
   template:
     metadata:
-      labels: { app: zeebe-play }
+      labels:
+        app: kogito-jobs-service
     spec:
       containers:
-        - name: zeebe-play
-          image: camunda/zeebe-play:8.6.0
-          ports:
-            - containerPort: 8080
-          env:
-            # Camunda Platform 7 Integration
-            - name: CAMUNDA_PLATFORM_URL
-              value: "http://camunda.dmn.svc.cluster.local:8080"
-            - name: CAMUNDA_PLATFORM_REST_URL
-              value: "http://publisher.dmn.svc.cluster.local:8080/engine-rest"
-            - name: CAMUNDA_PLATFORM_CLIENT_ID
-              value: "demo"
-            - name: CAMUNDA_PLATFORM_CLIENT_SECRET  
-              value: "demo"
-            # Enable all features
-            - name: SPRING_PROFILES_ACTIVE
-              value: "camunda-platform"
-            - name: ZEEBE_PLAY_IMPORT_ENABLED
-              value: "true"
-            - name: ZEEBE_PLAY_EXPORT_ENABLED
-              value: "true"
-            - name: ZEEBE_PLAY_DMN_ENABLED
-              value: "true"
-            - name: ZEEBE_PLAY_FORMS_ENABLED
-              value: "true"
-            # Performance tuning
-            - name: JAVA_OPTS
-              value: "-Xms256m -Xmx768m -XX:+UseG1GC"
-            - name: LOGGING_LEVEL_ORG_CAMUNDA
-              value: "INFO"
-          volumeMounts:
-            - name: temp-storage
-              mountPath: /tmp
-            - name: models-storage
-              mountPath: /opt/zeebe-play/models
-          readinessProbe:
-            httpGet: 
-              path: /actuator/health/readiness
-              port: 8080
-            initialDelaySeconds: 45
-            periodSeconds: 10
-            timeoutSeconds: 10
-            failureThreshold: 3
-          livenessProbe:
-            httpGet:
-              path: /actuator/health/liveness
-              port: 8080
-            initialDelaySeconds: 90
-            periodSeconds: 30
-            timeoutSeconds: 10
-            failureThreshold: 3
-          resources:
-            requests:
-              memory: "512Mi"
-              cpu: "300m"
-            limits:
-              memory: "1.5Gi"
-              cpu: "1000m"
-      volumes:
-        - name: temp-storage
-          emptyDir: {}
-        - name: models-storage
-          emptyDir: {}
+      - name: kogito-jobs-service
+        image: quay.io/kiegroup/kogito-jobs-service-ephemeral:1.44.1.Final
+        ports:
+        - containerPort: 8080
+        env:
+        - name: QUARKUS_HTTP_PORT
+          value: "8080"
+        - name: QUARKUS_HTTP_HOST
+          value: "0.0.0.0"
+        - name: KOGITO_JOBS_SERVICE_URL
+          value: "http://kogito-jobs-service.drools.svc.cluster.local:8080"
+        readinessProbe:
+          httpGet:
+            path: /q/health/ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /q/health/live
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: dmn-gui
-  namespace: dmn
+  name: kogito-jobs-service
+  namespace: drools
 spec:
-  selector: { app: zeebe-play }
+  selector:
+    app: kogito-jobs-service
   ports:
-    - name: http
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# =========================
+# Kogito Data Index Service - Process and Decision Monitoring
+# Provides indexing and querying capabilities for decision execution data
+# =========================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kogito-data-index
+  namespace: drools
+  labels:
+    app: kogito-data-index
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kogito-data-index
+  template:
+    metadata:
+      labels:
+        app: kogito-data-index
+    spec:
+      containers:
+      - name: kogito-data-index
+        image: quay.io/kiegroup/kogito-data-index-ephemeral:1.44.1.Final
+        ports:
+        - containerPort: 8080
+        env:
+        - name: QUARKUS_HTTP_PORT
+          value: "8080"
+        - name: QUARKUS_HTTP_HOST
+          value: "0.0.0.0"
+        - name: KOGITO_DATA_INDEX_URL
+          value: "http://kogito-data-index.drools.svc.cluster.local:8080"
+        readinessProbe:
+          httpGet:
+            path: /q/health/ready
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /q/health/live
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "800m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kogito-data-index
+  namespace: drools
+spec:
+  selector:
+    app: kogito-data-index
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# =========================
+# Drools Rule Engine Library Service
+# Lightweight embeddable rules service for applications
+# =========================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: drools-service-config
+  namespace: drools
+data:
+  application.yml: |
+    server:
       port: 8080
-      targetPort: 8080
+    spring:
+      application:
+        name: drools-rules-service
+    drools:
+      kie-server:
+        location: http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server
+        username: kieserver
+        password: kieserver1!
+      rules:
+        refresh-interval: 30000
+        cache-enabled: true
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,metrics
+      endpoint:
+        health:
+          show-details: always
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drools-rules-service
+  namespace: drools
+  labels:
+    app: drools-rules-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: drools-rules-service
+  template:
+    metadata:
+      labels:
+        app: drools-rules-service
+    spec:
+      containers:
+      - name: drools-service
+        image: openjdk:11-jre-slim
+        command: 
+        - sh
+        - -c
+        - |
+          echo "Starting Drools Rules Service..."
+          echo "This is a placeholder for your custom Drools application"
+          echo "Replace this with your actual Drools application image"
+          echo "Server running on port 8080"
+          while true; do
+            echo "$(date): Rules service running..."
+            sleep 60
+          done
+        ports:
+        - containerPort: 8080
+        env:
+        - name: JAVA_OPTS
+          value: "-Xms128m -Xmx512m"
+        - name: KIE_SERVER_URL
+          value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "echo ready"
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "echo alive"
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "800m"
+      volumes:
+      - name: config
+        configMap:
+          name: drools-service-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: drools-rules-service
+  namespace: drools
+spec:
+  selector:
+    app: drools-rules-service
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# =========================
+# Teleport Service - API Gateway (Unified Web Interface)
+# =========================
+apiVersion: v1
+kind: Service
+metadata:
+  name: drools-api-gateway
+  namespace: drools
+  annotations:
+    teleport.dev/name: "drools-api-gateway"
+    teleport.dev/protocol: "http"
+    teleport.dev/public_addr: "api-drools.app.suncoast.systems"
+    teleport.dev/labels: "environment=production,service=api-gateway"
+  labels:
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/component: gateway
+    teleport.dev/app: "drools-api-gateway"
+spec:
+  selector:
+    app: api-gateway
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP
+
+---
+# =========================
+# Teleport Service - Kogito Jobs Service (Async Processing)
+# =========================
+apiVersion: v1
+kind: Service
+metadata:
+  name: kogito-jobs-service
+  namespace: drools
+  annotations:
+    teleport.dev/name: "drools-kogito-jobs"
+    teleport.dev/protocol: "http"
+    teleport.dev/public_addr: "jobs-drools.app.suncoast.systems"
+    teleport.dev/labels: "environment=production,service=job-processing"
+  labels:
+    app.kubernetes.io/name: kogito-jobs-service
+    app.kubernetes.io/component: jobs
+    teleport.dev/app: "drools-kogito-jobs"
+spec:
+  selector:
+    app: kogito-jobs-service
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP
+
+---
+# =========================
+# Teleport Service - Kogito Data Index (Monitoring & Analytics)
+# =========================
+apiVersion: v1
+kind: Service
+metadata:
+  name: kogito-data-index
+  namespace: drools
+  annotations:
+    teleport.dev/name: "drools-kogito-data-index"
+    teleport.dev/protocol: "http"
+    teleport.dev/public_addr: "monitoring-drools.app.suncoast.systems"
+    teleport.dev/labels: "environment=production,service=monitoring"
+  labels:
+    app.kubernetes.io/name: kogito-data-index
+    app.kubernetes.io/component: monitoring
+    teleport.dev/app: "drools-kogito-data-index"
+spec:
+  selector:
+    app: kogito-data-index
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP
+
+---
+# =========================
+# Teleport Service - Drools Rules Service (Embeddable Library Service)
+# =========================
+apiVersion: v1
+kind: Service
+metadata:
+  name: drools-rules-service
+  namespace: drools
+  annotations:
+    teleport.dev/name: "drools-rules-service"
+    teleport.dev/protocol: "http"
+    teleport.dev/public_addr: "rules-drools.app.suncoast.systems"
+    teleport.dev/labels: "environment=production,service=embedded-rules"
+  labels:
+    app.kubernetes.io/name: drools-rules-service
+    app.kubernetes.io/component: embedded-runtime
+    teleport.dev/app: "drools-rules-service"
+spec:
+  selector:
+    app: drools-rules-service
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
   type: ClusterIP
 

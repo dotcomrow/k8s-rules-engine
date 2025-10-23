@@ -414,7 +414,7 @@ spec:
               done
       containers:
       - name: kie-workbench
-        image: quay.io/kiegroup/business-central:latest
+        image: jboss/business-central-workbench:latest
         ports:
         - containerPort: 8080
           name: http
@@ -581,7 +581,7 @@ spec:
               done
       containers:
       - name: kie-server
-        image: quay.io/kiegroup/kie-server:latest
+        image: jboss/kie-server-showcase:latest
         ports:
         - containerPort: 8080
         command: ["/bin/bash", "-c"]
@@ -690,7 +690,7 @@ spec:
     spec:
       containers:
       - name: kogito-decision-service
-        image: quay.io/kiegroup/kogito-decisions-quarkus:1.44.1.Final
+        image: apache/incubator-kie-kogito-quarkus-decisions:latest
         ports:
         - containerPort: 8080
         env:
@@ -1044,7 +1044,7 @@ spec:
     spec:
       containers:
       - name: kogito-jobs-service
-        image: quay.io/kiegroup/kogito-jobs-service-ephemeral:1.44.1.Final
+        image: apache/incubator-kie-kogito-jobs-service-ephemeral:latest
         ports:
         - containerPort: 8080
         env:
@@ -1112,7 +1112,7 @@ spec:
     spec:
       containers:
       - name: kogito-data-index
-        image: quay.io/kiegroup/kogito-data-index-ephemeral:1.44.1.Final
+        image: apache/incubator-kie-kogito-data-index-ephemeral:latest
         ports:
         - containerPort: 8080
         env:

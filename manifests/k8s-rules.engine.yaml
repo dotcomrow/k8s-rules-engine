@@ -602,7 +602,7 @@ spec:
             export KIE_MAVEN_REPO_PWD="$ADMIN_PASS"
             
             echo "🚀 Starting KIE Server with Vault credentials..."
-            exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml
+            exec /opt/jboss/wildfly/bin/start_kie-wb.sh
         env:
         - name: JAVA_OPTS
           value: "-Xms256m -Xmx1024m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=256m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"

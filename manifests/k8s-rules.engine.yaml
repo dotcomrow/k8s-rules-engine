@@ -696,7 +696,7 @@ spec:
     spec:
       containers:
       - name: kogito-decision-service
-        image: jboss/drools-workbench:latest
+        image: quay.io/kiegroup/kogito-runtime-jvm:1.40
         ports:
         - containerPort: 8080
         env:
@@ -1065,7 +1065,7 @@ spec:
     spec:
       containers:
       - name: kogito-jobs-service
-        image: jboss/kie-server:latest
+        image: quay.io/kiegroup/kogito-jobs-service-ephemeral:1.40
         ports:
         - containerPort: 8080
         env:
@@ -1133,7 +1133,7 @@ spec:
     spec:
       containers:
       - name: kogito-data-index
-        image: jboss/kie-server:latest
+        image: quay.io/kiegroup/kogito-data-index-ephemeral:1.40
         ports:
         - containerPort: 8080
         env:

@@ -414,7 +414,7 @@ spec:
               done
       containers:
       - name: kie-workbench
-        image: jboss/kie-wb-showcase:7.74.1.Final
+        image: quay.io/kiegroup/business-central:latest
         ports:
         - containerPort: 8080
           name: http
@@ -581,7 +581,7 @@ spec:
               done
       containers:
       - name: kie-server
-        image: jboss/kie-server-showcase:7.74.1.Final
+        image: quay.io/kiegroup/kie-server:latest
         ports:
         - containerPort: 8080
         command: ["/bin/bash", "-c"]

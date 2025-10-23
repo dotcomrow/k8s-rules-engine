@@ -1,0 +1,274 @@
+# =========================
+# Namespace
+# =========================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dmn
+
+---
+# =========================
+# Camunda 7 "Run" (DMN engine + REST)
+# Community/OSS image. Exposes /engine-rest.
+# =========================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: camunda-run
+  namespace: dmn
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: camunda-run }
+  template:
+    metadata:
+      labels: { app: camunda-run }
+    spec:
+      containers:
+        - name: camunda
+          image: camunda/camunda-bpm-platform:run-7.20.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            # Optional: bump heap if you like
+            - name: JAVA_OPTS
+              value: "-Xms256m -Xmx512m"
+          readinessProbe:
+            httpGet: { path: /actuator/health, port: 8080 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health, port: 8080 }
+            initialDelaySeconds: 40
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: camunda
+  namespace: dmn
+spec:
+  selector: { app: camunda-run }
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+
+---
+# =========================
+# NGINX reverse-proxy "publisher"
+# Adds CORS and proxies /engine-rest to the engine
+# so the browser GUI can deploy DMN directly.
+# =========================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: publisher-nginx-conf
+  namespace: dmn
+data:
+  nginx.conf: |
+    worker_processes  1;
+    events { worker_connections  1024; }
+    http {
+      client_max_body_size 20m;
+      server {
+        listen 8080;
+        # CORS preflight
+        if ($request_method = OPTIONS) {
+          add_header 'Access-Control-Allow-Origin' '*' always;
+          add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
+          add_header 'Access-Control-Allow-Headers' '*';
+          add_header 'Access-Control-Max-Age' 3600;
+          return 204;
+        }
+        location /engine-rest/ {
+          proxy_pass http://camunda.dmn.svc.cluster.local:8080/engine-rest/;
+          proxy_http_version 1.1;
+          proxy_set_header Connection "";
+          add_header 'Access-Control-Allow-Origin' '*' always;
+          add_header 'Access-Control-Expose-Headers' '*' always;
+        }
+        location = /healthz { return 200 'ok'; add_header Content-Type text/plain; }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: publisher
+  namespace: dmn
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: publisher }
+  template:
+    metadata:
+      labels: { app: publisher }
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25-alpine
+          ports: [{ containerPort: 8080 }]
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+      volumes:
+        - name: conf
+          configMap:
+            name: publisher-nginx-conf
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: publisher
+  namespace: dmn
+spec:
+  selector: { app: publisher }
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+
+---
+# =========================
+# DMN Web GUI (dmn-js editor) served from NGINX
+# Includes a "Publish" button -> posts to the publisher service.
+# =========================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dmn-gui
+  namespace: dmn
+data:
+  index.html: |
+    <!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8"/>
+      <title>DMN Editor (Single-User)</title>
+      <meta name="viewport" content="width=device-width,initial-scale=1"/>
+      <style>
+        html,body,#canvas{height:100%;margin:0}
+        #toolbar{padding:8px;display:flex;gap:8px;border-bottom:1px solid #ddd}
+        button,input{font-size:14px}
+        #status{margin-left:auto;color:#444}
+      </style>
+      <!-- dmn-js & dependencies from unpkg (OSS) -->
+      <script src="https://unpkg.com/dmn-js@14.5.0/dist/dmn-modeler.development.js"></script>
+      <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+    </head>
+    <body>
+      <div id="toolbar">
+        <input type="file" id="file" accept=".dmn,application/xml"/>
+        <button id="new">New</button>
+        <button id="open">Open</button>
+        <button id="save">Save</button>
+        <button id="publish">Publish</button>
+        <span id="status">idle</span>
+      </div>
+      <div id="canvas"></div>
+      <script>
+        const modeler = new window.DmnJS({ container: '#canvas' });
+        const status = (t)=>document.getElementById('status').textContent=t;
+
+        const EMPTY_DMN = `<?xml version="1.0" encoding="UTF-8"?>
+        <definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/"
+          xmlns:feel="https://www.omg.org/spec/DMN/20191111/FEEL/"
+          id="definitions" name="dmn" namespace="https://example.local/dmn">
+          <decision id="decision" name="backup_action">
+            <decisionTable id="table" hitPolicy="FIRST">
+              <input id="i1"><inputExpression id="ie1" typeRef="number"><text>size_mb</text></inputExpression></input>
+              <input id="i2"><inputExpression id="ie2" typeRef="number"><text>last_backup_age_sec</text></inputExpression></input>
+              <output id="o1" name="action" typeRef="string"/>
+            </decisionTable>
+          </decision>
+        </definitions>`;
+
+        async function openXml(xml){ await modeler.importXML(xml); status('ready'); }
+
+        document.getElementById('new').onclick = ()=>openXml(EMPTY_DMN);
+
+        document.getElementById('open').onclick = ()=>document.getElementById('file').click();
+        document.getElementById('file').onchange = async (e)=>{
+          const f = e.target.files[0]; if(!f) return;
+          const xml = await f.text(); await openXml(xml);
+        };
+
+        document.getElementById('save').onclick = async ()=>{
+          const { xml } = await modeler.saveXML({ format: true });
+          const blob = new Blob([xml], { type: 'application/xml' });
+          window.saveAs(blob, 'model.dmn'); status('saved');
+        };
+
+        // Publish: POST multipart/form-data to the publisher reverse-proxy
+        document.getElementById('publish').onclick = async ()=>{
+          status('publishing…');
+          const { xml } = await modeler.saveXML({ format: true });
+          const fd = new FormData();
+          fd.append('deployment-name', 'dmn-gui-deployment');
+          fd.append('deploy-changed-only', 'true');
+          fd.append('model.dmn', new Blob([xml], { type: 'application/xml' }), 'model.dmn');
+          try{
+            const res = await fetch('/publisher/engine-rest/deployment/create', { method: 'POST', body: fd });
+            if(!res.ok){ throw new Error('HTTP '+res.status); }
+            status('published ✅');
+          }catch(err){ status('publish failed ❌ ' + err.message); }
+        };
+
+        // load an empty starter on first boot
+        openXml(EMPTY_DMN).catch(err=>status('error: '+err.message));
+      </script>
+    </body>
+    </html>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dmn-gui
+  namespace: dmn
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: dmn-gui }
+  template:
+    metadata:
+      labels: { app: dmn-gui }
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25-alpine
+          ports: [{ containerPort: 80 }]
+          volumeMounts:
+            - name: web
+              mountPath: /usr/share/nginx/html/index.html
+              subPath: index.html
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+      volumes:
+        - name: web
+          configMap:
+            name: dmn-gui
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dmn-gui
+  namespace: dmn
+spec:
+  selector: { app: dmn-gui }
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+  type: ClusterIP
+

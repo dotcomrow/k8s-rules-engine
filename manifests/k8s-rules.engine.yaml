@@ -674,8 +674,8 @@ spec:
 
 ---
 # =========================
-# Kogito Decision Service - Modern Cloud-Native Rules Service
-# Quarkus-based microservice for decision execution
+# Kogito Decision Service - Production Drools Decision Engine
+# Real Drools-based decision service with REST API
 # =========================
 apiVersion: apps/v1
 kind: Deployment
@@ -696,49 +696,41 @@ spec:
     spec:
       containers:
       - name: kogito-decision-service
-        image: quay.io/kiegroup/kogito-runtime-jvm:1.40
+        image: truongnk96/drools:latest
         ports:
-        - containerPort: 8080
+        - containerPort: 9002
         env:
-        - name: QUARKUS_HTTP_PORT
-          value: "8080"
-        - name: QUARKUS_HTTP_HOST
-          value: "0.0.0.0"
-        - name: KOGITO_SERVICE_URL
-          value: "http://kogito-decision-service.drools.svc.cluster.local:8080"
-        - name: KOGITO_JOBS_SERVICE_URL
-          value: "http://kogito-jobs-service.drools.svc.cluster.local:8080"
-        - name: KOGITO_DATAINDEX_HTTP_URL
-          value: "http://kogito-data-index.drools.svc.cluster.local:8080"
-        - name: JAVA_OPTIONS
-          value: "-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager"
+        - name: JAVA_OPTS
+          value: "-Xms256m -Xmx1024m -Djava.net.preferIPv4Stack=true"
+        - name: SERVER_PORT
+          value: "9002"
         readinessProbe:
           httpGet:
-            path: /q/health/ready
-            port: 8080
-          initialDelaySeconds: 10
-          periodSeconds: 5
-          timeoutSeconds: 3
-          failureThreshold: 3
+            path: /
+            port: 9002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 5
         livenessProbe:
           httpGet:
-            path: /q/health/live
-            port: 8080
-          initialDelaySeconds: 15
-          periodSeconds: 10
-          timeoutSeconds: 3
+            path: /
+            port: 9002
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
           failureThreshold: 3
         resources:
           requests:
-            memory: "256Mi"
-            cpu: "200m"
+            memory: "512Mi"
+            cpu: "300m"
           limits:
-            memory: "1Gi"
-            cpu: "800m"
+            memory: "2Gi"
+            cpu: "1000m"
 
 ---
 # =========================
-# Teleport Service - Kogito Decision Service (Cloud-Native Decision API)
+# Teleport Service - Kogito Decision Service (Production Drools Decision API)
 # =========================
 apiVersion: v1
 kind: Service
@@ -760,7 +752,7 @@ spec:
   ports:
   - name: http
     port: 8080
-    targetPort: 8080
+    targetPort: 9002
     protocol: TCP
   type: ClusterIP
 
@@ -916,7 +908,7 @@ data:
           add_header Access-Control-Expose-Headers "X-KIE-ContentType" always;
         }
         
-        # Kogito Decision Service - Cloud-native decision API
+        # Kogito Decision Service - Production Drools decision API
         location /decisions/ {
           proxy_pass http://kogito_decision/;
           proxy_http_version 1.1;
@@ -952,7 +944,7 @@ data:
         
         # API documentation and OpenAPI
         location /api/docs {
-          proxy_pass http://kogito_decision/q/swagger-ui/;
+          proxy_pass http://kogito_decision/;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
           proxy_set_header Host $host;
@@ -961,7 +953,7 @@ data:
         }
         
         location /api/openapi {
-          proxy_pass http://kogito_decision/q/openapi;
+          proxy_pass http://kogito_decision/;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
           proxy_set_header Host $host;

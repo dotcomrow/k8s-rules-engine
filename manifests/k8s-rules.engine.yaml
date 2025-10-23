@@ -1311,6 +1311,7 @@ metadata:
     teleport.dev/public_addr: "api-drools.app.suncoast.systems"
     teleport.dev/labels: "environment=production,service=api-gateway"
   labels:
+    teleport.dev/enroll: "true"
     app.kubernetes.io/name: api-gateway
     app.kubernetes.io/component: gateway
     teleport.dev/app: "drools-api-gateway"
@@ -1339,6 +1340,7 @@ metadata:
     teleport.dev/public_addr: "jobs-drools.app.suncoast.systems"
     teleport.dev/labels: "environment=production,service=job-processing"
   labels:
+    teleport.dev/enroll: "true"
     app.kubernetes.io/name: kogito-jobs-service
     app.kubernetes.io/component: jobs
     teleport.dev/app: "drools-kogito-jobs"
@@ -1367,6 +1369,7 @@ metadata:
     teleport.dev/public_addr: "monitoring-drools.app.suncoast.systems"
     teleport.dev/labels: "environment=production,service=monitoring"
   labels:
+    teleport.dev/enroll: "true"
     app.kubernetes.io/name: kogito-data-index
     app.kubernetes.io/component: monitoring
     teleport.dev/app: "drools-kogito-data-index"
@@ -1395,6 +1398,7 @@ metadata:
     teleport.dev/public_addr: "rules-drools.app.suncoast.systems"
     teleport.dev/labels: "environment=production,service=embedded-rules"
   labels:
+    teleport.dev/enroll: "true"
     app.kubernetes.io/name: drools-rules-service
     app.kubernetes.io/component: embedded-runtime
     teleport.dev/app: "drools-rules-service"

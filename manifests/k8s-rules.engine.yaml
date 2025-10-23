@@ -75,22 +75,40 @@ data:
       client_max_body_size 20m;
       server {
         listen 8080;
-        # CORS preflight
-        if ($request_method = OPTIONS) {
-          add_header 'Access-Control-Allow-Origin' '*' always;
-          add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
-          add_header 'Access-Control-Allow-Headers' '*';
-          add_header 'Access-Control-Max-Age' 3600;
-          return 204;
+        
+        # CORS preflight handling
+        location / {
+          if ($request_method = OPTIONS) {
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
+            add_header 'Access-Control-Allow-Headers' '*' always;
+            add_header 'Access-Control-Max-Age' 3600 always;
+            return 204;
+          }
+          return 404;
         }
+        
         location /engine-rest/ {
+          # Handle CORS preflight for this location
+          if ($request_method = OPTIONS) {
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
+            add_header 'Access-Control-Allow-Headers' '*' always;
+            add_header 'Access-Control-Max-Age' 3600 always;
+            return 204;
+          }
+          
           proxy_pass http://camunda.dmn.svc.cluster.local:8080/engine-rest/;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
           add_header 'Access-Control-Allow-Origin' '*' always;
           add_header 'Access-Control-Expose-Headers' '*' always;
         }
-        location = /healthz { return 200 'ok'; add_header Content-Type text/plain; }
+        
+        location = /healthz { 
+          add_header Content-Type text/plain always;
+          return 200 'ok'; 
+        }
       }
     }
 ---

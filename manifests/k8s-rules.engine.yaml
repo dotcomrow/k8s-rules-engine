@@ -371,6 +371,21 @@ spec:
       labels: { app: kie-workbench }
     spec:
       serviceAccountName: drools-workbench
+      volumes:
+        - name: welcome-content
+          emptyDir: {}
+        - name: workbench-config
+          emptyDir: {}
+        - name: redirect-cli
+          configMap:
+            name: workbench-redirect-cli
+            items:
+              - key: enable-redirect.cli
+                path: enable-redirect.cli
+                mode: 0444
+              - key: run-cli.sh
+                path: run-cli.sh
+                mode: 0555
       initContainers:
         - name: wait-for-config-job
           image: alpine/k8s:1.31.4
@@ -388,54 +403,33 @@ spec:
                 [ "$SUCC" -ge 1 ] && break
                 sleep 5
               done
-        - name: setup-redirect
-          image: quay.io/kiegroup/business-central-workbench-showcase:latest
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              echo "🔧 Setting up Business Central redirect..."
-              rm -rf /opt/jboss/wildfly/welcome-content/*
-              cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
-              <!DOCTYPE html>
-              <html>
-              <head>
-                <meta http-equiv="refresh" content="0; url=/business-central/">
-                <title>Redirecting to Business Central...</title>
-              </head>
-              <body>
-                <p>Redirecting to <a href="/business-central/">Business Central</a>...</p>
-                <script>window.location.href='/business-central/';</script>
-              </body>
-              </html>
-              EOF
-              echo "✅ Redirect setup complete"
-          volumeMounts:
-            - name: welcome-content
-              mountPath: /opt/jboss/wildfly/welcome-content
-        - name: configure-oidc
+        - name: configure-root-redirect
           image: quay.io/kiegroup/business-central-workbench-showcase:latest
           command: ["/bin/sh","-c"]
           args:
             - |
-              sh /oidc/configure-oidc.sh
-          env:
-            - name: OIDC_ENABLE
-              value: "false"   # set to "true" when Keycloak/GitHub OIDC is ready
-            - name: OIDC_REALM
-              value: ""
-            - name: OIDC_ISSUER_URL
-              value: ""
-            - name: OIDC_CLIENT_ID
-              value: ""
-            - name: OIDC_CLIENT_SECRET
-              value: ""
-            - name: OIDC_REDIRECT_URL
-              value: ""
-            - name: OIDC_POST_LOGOUT_URL
-              value: ""
+              /redirect/run-cli.sh
           volumeMounts:
-            - name: wildfly-oidc
-              mountPath: /oidc
+            - name: workbench-config
+              mountPath: /config
+            - name: redirect-cli
+              mountPath: /redirect
+        - name: setup-redirect-fallback
+          image: quay.io/kiegroup/business-central-workbench-showcase:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              # Keep the static HTML as a fallback (not strictly needed once the handler is changed)
+              rm -rf /opt/jboss/wildfly/welcome-content/*
+              cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
+              <!DOCTYPE html>
+              <meta http-equiv="refresh" content="0; url=/business-central/">
+              <title>Redirecting…</title>
+              <a href="/business-central/">Continue to Business Central</a>
+              EOF
+          volumeMounts:
+            - name: welcome-content
+              mountPath: /opt/jboss/wildfly/welcome-content
       containers:
         - name: kie-workbench
           image: quay.io/kiegroup/business-central-workbench-showcase:latest
@@ -451,6 +445,9 @@ spec:
             - name: KIE_CONNECTION_DRIVER_CLASS
               value: "org.postgresql.Driver"
           volumeMounts:
+            # Use the modified configuration produced by the initContainer
+            - name: workbench-config
+              mountPath: /opt/jboss/wildfly/standalone/configuration
             - name: welcome-content
               mountPath: /opt/jboss/wildfly/welcome-content
           readinessProbe:
@@ -468,19 +465,6 @@ spec:
           resources:
             requests: { cpu: "500m", memory: "1Gi" }
             limits:   { cpu: "2000m", memory: "3Gi" }
-      volumes:
-        - name: welcome-content
-          emptyDir: {}
-        - name: wildfly-oidc
-          configMap:
-            name: wildfly-oidc-config
-            items:
-              - key: enable-oidc.cli
-                path: enable-oidc.cli
-                mode: 0444
-              - key: configure-oidc.sh
-                path: configure-oidc.sh
-                mode: 0555
 
 ---
 apiVersion: v1
@@ -638,6 +622,31 @@ spec:
               - key: configure-oidc.sh
                 path: configure-oidc.sh
                 mode: 0555
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workbench-redirect-cli
+  namespace: drools
+data:
+  enable-redirect.cli: |
+    embed-server --server-config=standalone.xml --std-out=echo
+    batch
+    # Create an Undertow redirect handler that points to /business-central/
+    /subsystem=undertow/configuration=handler/redirect=redirect-to-business-central:add(location="/business-central/")
+    # Point root ("/") to the redirect handler
+    /subsystem=undertow/server=default-server/host=default-host/location=\/:write-attribute(name=handler, value=redirect-to-business-central)
+    run-batch
+    stop-embedded-server
+  run-cli.sh: |
+    #!/usr/bin/env sh
+    set -euo pipefail
+    echo "📄 Copying standalone configuration into /config..."
+    cp -a /opt/jboss/wildfly/standalone/configuration/* /config/
+    ls -l /config/ >/dev/null
+    echo "🛠️  Applying redirect CLI to /config/standalone.xml ..."
+    /opt/jboss/wildfly/bin/jboss-cli.sh --file=/redirect/enable-redirect.cli
+    echo "✅ Redirect configured"
 
 ---
 apiVersion: v1

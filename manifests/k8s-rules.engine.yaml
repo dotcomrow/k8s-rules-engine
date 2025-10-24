@@ -315,7 +315,6 @@ metadata:
 
 # =========================
 # Optional OIDC config (Keycloak) – disabled by default
-# Toggle by setting OIDC_ENABLE="true" and filling values below.
 # =========================
 ---
 apiVersion: v1
@@ -325,14 +324,9 @@ metadata:
   namespace: drools
 data:
   enable-oidc.cli: |
-    # WildFly CLI to enable Elytron OIDC client for web tier
-    # Fill envs: OIDC_REALM, OIDC_ISSUER_URL, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET (if confidential),
-    #            OIDC_REDIRECT_URL, OIDC_POST_LOGOUT_URL
     embed-server --std-out=echo
     batch
-    # 1) Add OIDC client subsystem (if not present)
-    /subsystem=elytron-oidc-client:add() 
-    # 2) Register a secure-deployment for Business Central
+    /subsystem=elytron-oidc-client:add()
     /subsystem=elytron-oidc-client/secure-deployment=business-central.war:add(
       client-id="${env.OIDC_CLIENT_ID}",
       provider-url="${env.OIDC_ISSUER_URL}",
@@ -342,11 +336,8 @@ data:
       bearer-only=false,
       enable-basic-auth=false
     )
-    # 3) Optional: secret for confidential client
     if (outcome != success) of /subsystem=elytron-oidc-client/secure-deployment=business-central.war/credential=secret:add(secret="${env.OIDC_CLIENT_SECRET:}")
-    # 4) Map roles claim (Keycloak ‘roles’ or ‘realm_access.roles’) to groups
     /subsystem=elytron/role-decoder=oidc-roles:add(role-decoder=groups-to-roles)
-    # 5) Apply an application-security-domain using OIDC
     /subsystem=undertow/application-security-domain=other:add(http-authentication-factory=application-http-authentication)
     run-batch
     stop-embedded-server
@@ -362,8 +353,7 @@ data:
     echo "OIDC configuration applied."
 
 # =========================
-# KIE Workbench (Business Central) – Showcase image (BASIC auth by default)
-# OIDC initContainer will only run if OIDC_ENABLE=true
+# KIE Workbench (Business Central) – Showcase image
 # =========================
 ---
 apiVersion: apps/v1
@@ -427,23 +417,22 @@ spec:
           command: ["/bin/sh","-c"]
           args:
             - |
-              chmod +x /oidc/configure-oidc.sh
-              /oidc/configure-oidc.sh
+              sh /oidc/configure-oidc.sh
           env:
             - name: OIDC_ENABLE
               value: "false"   # set to "true" when Keycloak/GitHub OIDC is ready
             - name: OIDC_REALM
-              value: ""        # e.g., "drools"
+              value: ""
             - name: OIDC_ISSUER_URL
-              value: ""        # e.g., "https://keycloak.example.com/realms/drools"
+              value: ""
             - name: OIDC_CLIENT_ID
-              value: ""        # e.g., "business-central"
+              value: ""
             - name: OIDC_CLIENT_SECRET
-              value: ""        # if confidential client
+              value: ""
             - name: OIDC_REDIRECT_URL
-              value: ""        # e.g., "https://workbench-drools.app.suncoast.systems/business-central/"
+              value: ""
             - name: OIDC_POST_LOGOUT_URL
-              value: ""        # optional
+              value: ""
           volumeMounts:
             - name: wildfly-oidc
               mountPath: /oidc
@@ -457,7 +446,6 @@ spec:
           env:
             - name: JAVA_OPTS
               value: "-Xms512m -Xmx2048m -Dorg.kie.workbench.profile=FULL -Dorg.uberfire.nio.git.daemon.host=0.0.0.0 -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0"
-            # (Optional) point BC to Yugabyte; safe to leave
             - name: KIE_CONNECTION_URL
               value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/drools?currentSchema=drools"
             - name: KIE_CONNECTION_DRIVER_CLASS
@@ -489,8 +477,10 @@ spec:
             items:
               - key: enable-oidc.cli
                 path: enable-oidc.cli
+                mode: 0444
               - key: configure-oidc.sh
                 path: configure-oidc.sh
+                mode: 0555
 
 ---
 apiVersion: v1
@@ -519,7 +509,6 @@ spec:
 
 # =========================
 # KIE Server – Showcase image
-# OIDC initContainer will only run if OIDC_ENABLE=true
 # =========================
 ---
 apiVersion: apps/v1
@@ -583,8 +572,7 @@ spec:
           command: ["/bin/sh","-c"]
           args:
             - |
-              chmod +x /oidc/configure-oidc.sh
-              /oidc/configure-oidc.sh
+              sh /oidc/configure-oidc.sh
           env:
             - name: OIDC_ENABLE
               value: "false"   # set to "true" for Keycloak OIDC
@@ -597,7 +585,7 @@ spec:
             - name: OIDC_CLIENT_SECRET
               value: ""        # if confidential client
             - name: OIDC_REDIRECT_URL
-              value: ""        # e.g., "https://kie-server-droplets.../kie-server/"
+              value: ""        # e.g., external URL base for callbacks (not strictly needed for bearer-only)
             - name: OIDC_POST_LOGOUT_URL
               value: ""
           volumeMounts:
@@ -619,7 +607,6 @@ spec:
               value: "https://workbench-drools.app.suncoast.systems/business-central/rest/controller"
             - name: KIE_MAVEN_REPO
               value: "https://workbench-drools.app.suncoast.systems/business-central/maven2"
-            # Showcase images already include default users (admin / kieserver).
           volumeMounts:
             - name: welcome-content
               mountPath: /opt/jboss/wildfly/welcome-content
@@ -647,8 +634,10 @@ spec:
             items:
               - key: enable-oidc.cli
                 path: enable-oidc.cli
+                mode: 0444
               - key: configure-oidc.sh
                 path: configure-oidc.sh
+                mode: 0555
 
 ---
 apiVersion: v1
@@ -791,7 +780,7 @@ spec:
   type: ClusterIP
 
 # =========================
-# NGINX API Gateway (unchanged, minor tidy)
+# NGINX API Gateway
 # =========================
 ---
 apiVersion: v1
@@ -815,10 +804,8 @@ data:
       access_log /var/log/nginx/access.log main;
       error_log  /var/log/nginx/error.log warn;
 
-      sendfile on; tcp_nopush on; tcp_nodelay on;
-      keepalive_timeout 65;
-      client_max_body_size 50m;
-      client_body_timeout 60s; client_header_timeout 60s;
+      sendfile on; tcp_nopush on; tcp_nodelay on; keepalive_timeout 65;
+      client_max_body_size 50m; client_body_timeout 60s; client_header_timeout 60s;
 
       gzip on; gzip_vary on; gzip_min_length 1000;
       gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
@@ -1100,7 +1087,7 @@ spec:
   type: ClusterIP
 
 # =========================
-# Placeholder Drools Rules Service (unchanged)
+# Placeholder Drools Rules Service
 # =========================
 ---
 apiVersion: v1

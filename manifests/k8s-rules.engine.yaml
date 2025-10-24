@@ -460,9 +460,12 @@ spec:
             export KIE_CONNECTION_USER="$(cat /vault/secrets/db-username)"
             export KIE_CONNECTION_PASSWORD="$(cat /vault/secrets/db-password)"
             
-            # Configure Wildfly to redirect root to business-central
-            mkdir -p /tmp/root-redirect.war
-            cat > /tmp/root-redirect.war/index.html << 'EOF'
+            # Override welcome content with redirect
+            echo "🔧 Replacing Wildfly welcome content with Business Central redirect..."
+            
+            # Replace the entire welcome-content directory with our redirect
+            rm -rf /opt/jboss/wildfly/welcome-content/*
+            cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
             <!DOCTYPE html>
             <html>
             <head>
@@ -475,8 +478,6 @@ spec:
             </body>
             </html>
             EOF
-            cd /tmp && jar -cf root.war -C root-redirect.war .
-            cp root.war /opt/jboss/wildfly/standalone/deployments/
             
             echo "🚀 Starting KIE Workbench with Vault credentials..."
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0
@@ -655,9 +656,12 @@ spec:
             export KIE_MAVEN_REPO_USER="$ADMIN_USER"
             export KIE_MAVEN_REPO_PWD="$ADMIN_PASS"
             
-            # Configure Wildfly to redirect root to KIE Server API
-            mkdir -p /tmp/root-redirect.war
-            cat > /tmp/root-redirect.war/index.html << 'EOF'
+            # Override welcome content with redirect
+            echo "🔧 Replacing Wildfly welcome content with KIE Server redirect..."
+            
+            # Replace the entire welcome-content directory with our redirect
+            rm -rf /opt/jboss/wildfly/welcome-content/*
+            cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
             <!DOCTYPE html>
             <html>
             <head>
@@ -670,8 +674,6 @@ spec:
             </body>
             </html>
             EOF
-            cd /tmp && jar -cf root.war -C root-redirect.war .
-            cp root.war /opt/jboss/wildfly/standalone/deployments/
             
             echo "🚀 Starting KIE Server with Vault credentials..."
             # Ensure KIE Server deploys at root for now
@@ -786,9 +788,12 @@ spec:
           - |
             set -euo pipefail
             
-            # Configure Wildfly to redirect root to KIE Server API
-            mkdir -p /tmp/root-redirect.war
-            cat > /tmp/root-redirect.war/index.html << 'EOF'
+            # Override welcome content with redirect
+            echo "🔧 Replacing Wildfly welcome content with KIE Server redirect..."
+            
+            # Replace the entire welcome-content directory with our redirect
+            rm -rf /opt/jboss/wildfly/welcome-content/*
+            cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
             <!DOCTYPE html>
             <html>
             <head>
@@ -801,8 +806,6 @@ spec:
             </body>
             </html>
             EOF
-            cd /tmp && jar -cf root.war -C root-redirect.war .
-            cp root.war /opt/jboss/wildfly/standalone/deployments/
             
             echo "🚀 Starting KIE Server Showcase..."
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0

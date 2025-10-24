@@ -602,7 +602,7 @@ spec:
             export KIE_MAVEN_REPO_PWD="$ADMIN_PASS"
             
             echo "🚀 Starting KIE Server with Vault credentials..."
-            exec /opt/jboss/wildfly/bin/start_kie-wb.sh
+            exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0
         env:
         - name: JAVA_OPTS
           value: "-Xms256m -Xmx1024m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=256m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"
@@ -616,10 +616,10 @@ spec:
           value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/maven2"
         - name: KIE_SERVER_MODE
           value: "DEVELOPMENT"
-        - name: KIE_SERVER_STARTUP_STRATEGY
-          value: "LocalContainerStartupStrategy"
         - name: DROOLS_SERVER_FILTER_CLASSES
           value: "true"
+        - name: KIE_SERVER_BYPASS_AUTH_USER
+          value: "false"
         readinessProbe:
           httpGet:
             path: /kie-server/services/rest/server

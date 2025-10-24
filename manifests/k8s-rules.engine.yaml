@@ -552,11 +552,10 @@ metadata:
     teleport.dev/public-addr: "workbench-drools.app.suncoast.systems"
     teleport.dev/description: "KIE Workbench - Business rules authoring and management interface"
     teleport.dev/port: "8080"
-    teleport.dev/app-rewrite: "true"
+  labels:
     app.kubernetes.io/name: kie-workbench
     app.kubernetes.io/component: authoring
     teleport.dev/app: "drools-workbench"
-  labels:
     teleport.dev/enroll: "true"
 spec:
   selector:
@@ -763,7 +762,6 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "kie-server-drools.app.suncoast.systems"
     teleport.dev/description: "KIE Server - Rules execution runtime and management API"
-    teleport.dev/app-rewrite: "true"
   labels:
     app.kubernetes.io/name: kie-server
     app.kubernetes.io/component: runtime
@@ -800,37 +798,40 @@ spec:
       labels:
         app: kogito-decision-service
     spec:
+      initContainers:
+        - name: setup-redirect
+          image: jboss/kie-server-showcase:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              echo "🔧 Setting up Decision Service redirect..."
+              mkdir -p /shared/welcome-content
+              cat > /shared/welcome-content/index.html << 'EOF'
+              <!DOCTYPE html>
+              <html>
+              <head>
+                  <meta http-equiv="refresh" content="0; url=/kie-server/services/rest/server">
+                  <title>Redirecting to KIE Server API...</title>
+              </head>
+              <body>
+                  <p>Redirecting to <a href="/kie-server/services/rest/server">KIE Server REST API</a>...</p>
+                  <script>window.location.href='/kie-server/services/rest/server';</script>
+              </body>
+              </html>
+              EOF
+              echo "✅ Redirect setup complete"
+          volumeMounts:
+          - name: welcome-content
+            mountPath: /shared
       containers:
       - name: kogito-decision-service
         image: jboss/kie-server-showcase:latest
-        command: ["/bin/bash", "-c"]
-        args:
-          - |
-            set -euo pipefail
-            
-            # Override welcome content with redirect
-            echo "🔧 Replacing Wildfly welcome content with KIE Server redirect..."
-            
-            # Replace the entire welcome-content directory with our redirect
-            rm -rf /opt/jboss/wildfly/welcome-content/*
-            cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta http-equiv="refresh" content="0; url=/kie-server/services/rest/server">
-                <title>Redirecting to KIE Server API...</title>
-            </head>
-            <body>
-                <p>Redirecting to <a href="/kie-server/services/rest/server">KIE Server REST API</a>...</p>
-                <script>window.location.href='/kie-server/services/rest/server';</script>
-            </body>
-            </html>
-            EOF
-            
-            echo "🚀 Starting KIE Server Showcase..."
-            exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0
         ports:
         - containerPort: 8080
+        volumeMounts:
+        - name: welcome-content
+          mountPath: /opt/jboss/wildfly/welcome-content
+          subPath: welcome-content
         env:
         - name: JAVA_OPTS
           value: "-Xms512m -Xmx2048m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"
@@ -869,6 +870,9 @@ spec:
           limits:
             memory: "3Gi"
             cpu: "2000m"
+      volumes:
+      - name: welcome-content
+        emptyDir: {}
 
 ---
 # =========================
@@ -1557,7 +1561,6 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "api-drools.app.suncoast.systems"
     teleport.dev/description: "API Gateway - Main entry point for Drools platform providing routing and load balancing to backend services"
-    teleport.dev/app-rewrite: "true"
   labels:
     teleport.dev/enroll: "true"
     app.kubernetes.io/name: api-gateway

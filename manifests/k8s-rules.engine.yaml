@@ -511,13 +511,6 @@ metadata:
   name: kie-workbench
   namespace: drools
   annotations:
-    teleport.dev/name: "drools-workbench"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "workbench-drools.app.suncoast.systems"
-    teleport.dev/path: "business-central/"
-    teleport.dev/description: "Business Central - Rules authoring and management workbench for creating, editing, and managing business rules and decision models"
-  labels:
-    teleport.dev/enroll: "true"
     app.kubernetes.io/name: kie-workbench
     app.kubernetes.io/component: authoring
     teleport.dev/app: "drools-workbench"
@@ -687,15 +680,9 @@ metadata:
   name: kie-server
   namespace: drools
   annotations:
-    teleport.dev/name: "drools-kie-server"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "kie-server-drools.app.suncoast.systems"
-    teleport.dev/path: "kie-server/"
-    teleport.dev/description: "KIE Server - Production rules execution runtime for deploying and executing business rules and decision services"
   labels:
     app.kubernetes.io/name: kie-server
     app.kubernetes.io/component: runtime
-    teleport.dev/app: "drools-kie-server"
 spec:
   selector:
     app: kie-server
@@ -778,15 +765,9 @@ metadata:
   name: kogito-decision-service
   namespace: drools
   annotations:
-    teleport.dev/name: "drools-kie-server-showcase"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "kie-showcase-drools.app.suncoast.systems"
-    teleport.dev/path: "kie-server/"
-    teleport.dev/description: "KIE Server Showcase - Decision service API with sample rules and REST endpoints for testing business rule execution"
   labels:
     app.kubernetes.io/name: kogito-decision-service
     app.kubernetes.io/component: rules-execution
-    teleport.dev/app: "drools-kie-server-showcase"
 spec:
   selector:
     app: kogito-decision-service
@@ -1479,16 +1460,9 @@ metadata:
   name: kogito-jobs-service
   namespace: drools
   annotations:
-    teleport.dev/name: "drools-kogito-jobs"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "jobs-drools.app.suncoast.systems"
-    teleport.dev/path: "q/health"
-    teleport.dev/description: "Kogito Jobs Service - Task scheduling and timer management service for process workflows and delayed rule execution"
   labels:
-    teleport.dev/enroll: "true"
     app.kubernetes.io/name: kogito-jobs-service
     app.kubernetes.io/component: jobs
-    teleport.dev/app: "drools-kogito-jobs"
 spec:
   selector:
     app: kogito-jobs-service
@@ -1509,16 +1483,9 @@ metadata:
   name: kogito-data-index
   namespace: drools
   annotations:
-    teleport.dev/name: "drools-kogito-data-index"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "monitoring-drools.app.suncoast.systems"
-    teleport.dev/path: "graphql"
-    teleport.dev/description: "Kogito Data Index - Process monitoring and analytics service providing GraphQL queries for business process insights"
   labels:
-    teleport.dev/enroll: "true"
     app.kubernetes.io/name: kogito-data-index
     app.kubernetes.io/component: monitoring
-    teleport.dev/app: "drools-kogito-data-index"
 spec:
   selector:
     app: kogito-data-index
@@ -1539,15 +1506,9 @@ metadata:
   name: drools-rules-service
   namespace: drools
   annotations:
-    teleport.dev/name: "drools-rules-service"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "rules-drools.app.suncoast.systems"
-    teleport.dev/description: "Drools Rules Service - Embedded Drools runtime providing lightweight rule execution without full KIE Server overhead"
   labels:
-    teleport.dev/enroll: "true"
     app.kubernetes.io/name: drools-rules-service
     app.kubernetes.io/component: embedded-runtime
-    teleport.dev/app: "drools-rules-service"
 spec:
   selector:
     app: drools-rules-service

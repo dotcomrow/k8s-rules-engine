@@ -484,8 +484,11 @@ spec:
             export KIE_CONNECTION_USER="$(cat /vault/secrets/db-username)"
             export KIE_CONNECTION_PASSWORD="$(cat /vault/secrets/db-password)"
             
-            echo "🚀 Starting KIE Workbench with Vault credentials..."
-            exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0
+            # Completely disable Wildfly welcome content handler
+            echo "� Disabling Wildfly welcome content handler..."
+            
+            echo "�🚀 Starting KIE Workbench with Vault credentials..."
+            exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -Djboss.as.management.blocking.timeout=3600
         env:
         - name: JAVA_OPTS
           value: "-Xms512m -Xmx2048m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=512m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8 -Dorg.kie.server.bypass.auth.user=false -Dorg.kie.workbench.profile=FULL -Dorg.uberfire.nio.git.daemon.host=0.0.0.0 -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0"
@@ -692,6 +695,15 @@ spec:
             export KIE_MAVEN_REPO_PWD="$ADMIN_PASS"
             
             echo "🚀 Starting KIE Server with Vault credentials..."
+            
+            echo "🔧 Disabling Wildfly welcome handler..."
+            cat > /tmp/disable-welcome.cli << 'EOF'
+            embed-server --std-out=echo
+            /subsystem=undertow/server=default-server/host=default-host/location="/":remove
+            stop-embedded-server
+            EOF
+            /opt/jboss/wildfly/bin/jboss-cli.sh --file=/tmp/disable-welcome.cli
+            
             # Ensure KIE Server deploys at root for now
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0
         env:
@@ -826,6 +838,20 @@ spec:
       containers:
       - name: kogito-decision-service
         image: jboss/kie-server-showcase:latest
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            echo "🚀 Starting Decision Service..."
+            
+            echo "🔧 Disabling Wildfly welcome handler..."
+            cat > /tmp/disable-welcome.cli << 'EOF'
+            embed-server --std-out=echo
+            /subsystem=undertow/server=default-server/host=default-host/location="/":remove
+            stop-embedded-server
+            EOF
+            /opt/jboss/wildfly/bin/jboss-cli.sh --file=/tmp/disable-welcome.cli
+            
+            exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml
         ports:
         - containerPort: 8080
         volumeMounts:

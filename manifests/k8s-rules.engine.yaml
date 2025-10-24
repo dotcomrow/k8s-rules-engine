@@ -515,6 +515,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public_addr: "workbench-drools.app.suncoast.systems"
     teleport.dev/labels: "environment=production,service=rules-authoring"
+    teleport.dev/uri: "/business-central/"
   labels:
     teleport.dev/enroll: "true"
     app.kubernetes.io/name: kie-workbench
@@ -690,6 +691,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public_addr: "kie-server-drools.app.suncoast.systems"
     teleport.dev/labels: "environment=production,service=rules-execution"
+    teleport.dev/uri: "/kie-server/"
   labels:
     app.kubernetes.io/name: kie-server
     app.kubernetes.io/component: runtime
@@ -780,6 +782,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public_addr: "kie-showcase-drools.app.suncoast.systems"
     teleport.dev/labels: "environment=production,service=rules-execution"
+    teleport.dev/uri: "/kie-server/"
   labels:
     app.kubernetes.io/name: kogito-decision-service
     app.kubernetes.io/component: rules-execution
@@ -1433,6 +1436,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public_addr: "jobs-drools.app.suncoast.systems"
     teleport.dev/labels: "environment=production,service=job-processing"
+    teleport.dev/uri: "/q/health"
   labels:
     teleport.dev/enroll: "true"
     app.kubernetes.io/name: kogito-jobs-service
@@ -1462,6 +1466,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public_addr: "monitoring-drools.app.suncoast.systems"
     teleport.dev/labels: "environment=production,service=monitoring"
+    teleport.dev/uri: "/graphql"
   labels:
     teleport.dev/enroll: "true"
     app.kubernetes.io/name: kogito-data-index

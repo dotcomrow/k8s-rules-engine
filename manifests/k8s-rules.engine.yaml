@@ -464,13 +464,19 @@ spec:
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0
         env:
         - name: JAVA_OPTS
-          value: "-Xms512m -Xmx2048m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=512m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"
+          value: "-Xms512m -Xmx2048m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=512m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8 -Dorg.kie.server.bypass.auth.user=false -Dorg.kie.workbench.profile=FULL -Dorg.uberfire.nio.git.daemon.host=0.0.0.0"
         - name: KIE_CONNECTION_URL
           value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/drools?currentSchema=drools"
         - name: KIE_CONNECTION_DRIVER_CLASS
           value: "org.postgresql.Driver"
         - name: KIE_SERVER_LOCATION
-          value: "https://api-drools.app.suncoast.systems/kie-server/services/rest/server"
+          value: "https://kie-server-drools.app.suncoast.systems/services/rest/server"
+        - name: DROOLS_WB_HOST
+          value: "workbench-drools.app.suncoast.systems"
+        - name: DROOLS_WB_PROTOCOL
+          value: "https"
+        - name: DROOLS_WB_PORT
+          value: "443"
         volumeMounts:
         - name: git-storage
           mountPath: /opt/jboss/.niogit
@@ -511,9 +517,15 @@ metadata:
   name: kie-workbench
   namespace: drools
   annotations:
+    teleport.dev/name: "drools-workbench"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "workbench-drools.app.suncoast.systems"
+    teleport.dev/description: "KIE Workbench - Business rules authoring and management interface"
     app.kubernetes.io/name: kie-workbench
     app.kubernetes.io/component: authoring
     teleport.dev/app: "drools-workbench"
+  labels:
+    teleport.dev/enroll: "true"
 spec:
   selector:
     app: kie-workbench
@@ -629,7 +641,7 @@ spec:
         - name: KIE_SERVER_ID
           value: "kie-server"
         - name: KIE_SERVER_LOCATION
-          value: "https://api-drools.app.suncoast.systems/kie-server/services/rest/server"
+          value: "https://kie-server-drools.app.suncoast.systems/services/rest/server"
         - name: KIE_SERVER_CONTROLLER
           value: "https://workbench-drools.app.suncoast.systems/business-central/rest/controller"
         - name: KIE_MAVEN_REPO
@@ -680,9 +692,14 @@ metadata:
   name: kie-server
   namespace: drools
   annotations:
+    teleport.dev/name: "drools-kie-server"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "kie-server-drools.app.suncoast.systems"
+    teleport.dev/description: "KIE Server - Rules execution runtime and management API"
   labels:
     app.kubernetes.io/name: kie-server
     app.kubernetes.io/component: runtime
+    teleport.dev/enroll: "true"
 spec:
   selector:
     app: kie-server
@@ -765,9 +782,14 @@ metadata:
   name: kogito-decision-service
   namespace: drools
   annotations:
+    teleport.dev/name: "drools-decision-service"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "decisions-drools.app.suncoast.systems"
+    teleport.dev/description: "KIE Server Showcase - Production rules execution and decision API"
   labels:
     app.kubernetes.io/name: kogito-decision-service
     app.kubernetes.io/component: rules-execution
+    teleport.dev/enroll: "true"
 spec:
   selector:
     app: kogito-decision-service
@@ -1451,9 +1473,14 @@ metadata:
   name: kogito-jobs-service
   namespace: drools
   annotations:
+    teleport.dev/name: "drools-jobs-service"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "jobs-drools.app.suncoast.systems"
+    teleport.dev/description: "Kogito Jobs Service - Asynchronous job processing and scheduling"
   labels:
     app.kubernetes.io/name: kogito-jobs-service
     app.kubernetes.io/component: jobs
+    teleport.dev/enroll: "true"
 spec:
   selector:
     app: kogito-jobs-service
@@ -1474,9 +1501,14 @@ metadata:
   name: kogito-data-index
   namespace: drools
   annotations:
+    teleport.dev/name: "drools-data-index"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "monitoring-drools.app.suncoast.systems"
+    teleport.dev/description: "Kogito Data Index - Process and decision monitoring and analytics"
   labels:
     app.kubernetes.io/name: kogito-data-index
     app.kubernetes.io/component: monitoring
+    teleport.dev/enroll: "true"
 spec:
   selector:
     app: kogito-data-index
@@ -1497,9 +1529,14 @@ metadata:
   name: drools-rules-service
   namespace: drools
   annotations:
+    teleport.dev/name: "drools-rules-service"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "rules-drools.app.suncoast.systems"
+    teleport.dev/description: "Drools Rules Service - Embeddable rules engine library service"
   labels:
     app.kubernetes.io/name: drools-rules-service
     app.kubernetes.io/component: embedded-runtime
+    teleport.dev/enroll: "true"
 spec:
   selector:
     app: drools-rules-service

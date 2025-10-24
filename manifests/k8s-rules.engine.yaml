@@ -631,7 +631,7 @@ spec:
         readinessProbe:
           httpGet:
             path: /kie-server/services/rest/server
-            port: 8080
+            port: 9990
           initialDelaySeconds: 90
           periodSeconds: 15
           timeoutSeconds: 10
@@ -639,7 +639,7 @@ spec:
         livenessProbe:
           httpGet:
             path: /kie-server/services/rest/server
-            port: 8080
+            port: 9990
           initialDelaySeconds: 120
           periodSeconds: 30
           timeoutSeconds: 10
@@ -676,7 +676,7 @@ spec:
   ports:
   - name: http
     port: 8080
-    targetPort: 8080
+    targetPort: 80999080
     protocol: TCP
   type: ClusterIP
 

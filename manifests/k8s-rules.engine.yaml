@@ -881,20 +881,7 @@ data:
           set $cors_creds "true";
         }
         
-        # CORS preflight handling for all OPTIONS requests
-        location ~ ^/(business-central|kie-server|decisions|api).*$ {
-          if ($request_method = OPTIONS) {
-            add_header Access-Control-Allow-Origin $cors_origin always;
-            add_header Access-Control-Allow-Credentials $cors_creds always;
-            add_header Access-Control-Allow-Methods $cors_methods always;
-            add_header Access-Control-Allow-Headers $cors_headers always;
-            add_header Access-Control-Max-Age 3600 always;
-            add_header Content-Length 0 always;
-            add_header Content-Type text/plain always;
-            return 204;
-          }
-          return 404;
-        }
+        # CORS preflight handling moved to individual location blocks
         
         # Root - redirect to KIE Workbench via external URL
         location = / {
@@ -903,6 +890,18 @@ data:
         
         # KIE Workbench - Business rules authoring interface
         location /business-central/ {
+          # Handle CORS preflight requests
+          if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin $cors_origin always;
+            add_header Access-Control-Allow-Credentials $cors_creds always;
+            add_header Access-Control-Allow-Methods "GET,POST,PUT,DELETE,OPTIONS,PATCH" always;
+            add_header Access-Control-Allow-Headers "Authorization,Content-Type,Accept,Origin,User-Agent,DNT,Cache-Control,X-Mx-ReqToken,Keep-Alive,X-Requested-With,If-Modified-Since,X-KIE-ContentType" always;
+            add_header Access-Control-Max-Age 3600 always;
+            add_header Content-Length 0 always;
+            add_header Content-Type text/plain always;
+            return 204;
+          }
+          
           proxy_pass http://kie_workbench/business-central/;
           proxy_http_version 1.1;
           proxy_set_header Upgrade $http_upgrade;
@@ -930,6 +929,18 @@ data:
         
         # KIE Server Showcase - Production rules execution API  
         location /kie-server/ {
+          # Handle CORS preflight requests
+          if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin $cors_origin always;
+            add_header Access-Control-Allow-Credentials $cors_creds always;
+            add_header Access-Control-Allow-Methods "GET,POST,PUT,DELETE,OPTIONS,PATCH" always;
+            add_header Access-Control-Allow-Headers "Authorization,Content-Type,Accept,Origin,User-Agent,DNT,Cache-Control,X-Mx-ReqToken,Keep-Alive,X-Requested-With,If-Modified-Since,X-KIE-ContentType" always;
+            add_header Access-Control-Max-Age 3600 always;
+            add_header Content-Length 0 always;
+            add_header Content-Type text/plain always;
+            return 204;
+          }
+          
           proxy_pass http://kogito_decision/kie-server/;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
@@ -953,6 +964,18 @@ data:
         
         # Legacy decision service endpoint (redirect to KIE Server)
         location /decisions/ {
+          # Handle CORS preflight requests
+          if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin $cors_origin always;
+            add_header Access-Control-Allow-Credentials $cors_creds always;
+            add_header Access-Control-Allow-Methods "GET,POST,PUT,DELETE,OPTIONS,PATCH" always;
+            add_header Access-Control-Allow-Headers "Authorization,Content-Type,Accept,Origin,User-Agent,DNT,Cache-Control,X-Mx-ReqToken,Keep-Alive,X-Requested-With,If-Modified-Since,X-KIE-ContentType" always;
+            add_header Access-Control-Max-Age 3600 always;
+            add_header Content-Length 0 always;
+            add_header Content-Type text/plain always;
+            return 204;
+          }
+          
           proxy_pass http://kogito_decision/kie-server/;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
@@ -988,6 +1011,18 @@ data:
         
         # KIE Server REST API documentation
         location /api/docs {
+          # Handle CORS preflight requests
+          if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin $cors_origin always;
+            add_header Access-Control-Allow-Credentials $cors_creds always;
+            add_header Access-Control-Allow-Methods "GET,POST,PUT,DELETE,OPTIONS,PATCH" always;
+            add_header Access-Control-Allow-Headers "Authorization,Content-Type,Accept,Origin,User-Agent,DNT,Cache-Control,X-Mx-ReqToken,Keep-Alive,X-Requested-With,If-Modified-Since,X-KIE-ContentType" always;
+            add_header Access-Control-Max-Age 3600 always;
+            add_header Content-Length 0 always;
+            add_header Content-Type text/plain always;
+            return 204;
+          }
+          
           proxy_pass http://kogito_decision/kie-server/docs/;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
@@ -998,6 +1033,18 @@ data:
         
         # KIE Server OpenAPI specification
         location /api/openapi {
+          # Handle CORS preflight requests
+          if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin $cors_origin always;
+            add_header Access-Control-Allow-Credentials $cors_creds always;
+            add_header Access-Control-Allow-Methods "GET,POST,PUT,DELETE,OPTIONS,PATCH" always;
+            add_header Access-Control-Allow-Headers "Authorization,Content-Type,Accept,Origin,User-Agent,DNT,Cache-Control,X-Mx-ReqToken,Keep-Alive,X-Requested-With,If-Modified-Since,X-KIE-ContentType" always;
+            add_header Access-Control-Max-Age 3600 always;
+            add_header Content-Length 0 always;
+            add_header Content-Type text/plain always;
+            return 204;
+          }
+          
           proxy_pass http://kogito_decision/kie-server/services/rest/server;
           proxy_http_version 1.1;
           proxy_set_header Connection "";

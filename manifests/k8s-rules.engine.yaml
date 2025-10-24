@@ -552,6 +552,7 @@ metadata:
     teleport.dev/public-addr: "workbench-drools.app.suncoast.systems"
     teleport.dev/description: "KIE Workbench - Business rules authoring and management interface"
     teleport.dev/port: "8080"
+    teleport.dev/app-rewrite: "true"
     app.kubernetes.io/name: kie-workbench
     app.kubernetes.io/component: authoring
     teleport.dev/app: "drools-workbench"
@@ -762,6 +763,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "kie-server-drools.app.suncoast.systems"
     teleport.dev/description: "KIE Server - Rules execution runtime and management API"
+    teleport.dev/app-rewrite: "true"
   labels:
     app.kubernetes.io/name: kie-server
     app.kubernetes.io/component: runtime
@@ -1555,6 +1557,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "api-drools.app.suncoast.systems"
     teleport.dev/description: "API Gateway - Main entry point for Drools platform providing routing and load balancing to backend services"
+    teleport.dev/app-rewrite: "true"
   labels:
     teleport.dev/enroll: "true"
     app.kubernetes.io/name: api-gateway

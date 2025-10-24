@@ -932,6 +932,7 @@ data:
           add_header Access-Control-Allow-Origin $cors_origin always; add_header Content-Type application/json always;
         }
       }
+    }
 ---
 apiVersion: apps/v1
 kind: Deployment

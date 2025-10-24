@@ -445,7 +445,7 @@ spec:
         - name: KIE_CONNECTION_DRIVER_CLASS
           value: "org.postgresql.Driver"
         - name: KIE_SERVER_LOCATION
-          value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server"
+          value: "https://api-drools.app.suncoast.systems/kie-server/services/rest/server"
         volumeMounts:
         - name: git-storage
           mountPath: /opt/jboss/.niogit
@@ -488,7 +488,7 @@ metadata:
   annotations:
     teleport.dev/name: "drools-workbench"
     teleport.dev/protocol: "http"
-    teleport.dev/public_addr: "workbench.drools.yourdomain.com"
+    teleport.dev/public_addr: "workbench-drools.app.suncoast.systems"
     teleport.dev/labels: "environment=production,service=rules-authoring"
   labels:
     app.kubernetes.io/name: kie-workbench
@@ -609,11 +609,11 @@ spec:
         - name: KIE_SERVER_ID
           value: "kie-server"
         - name: KIE_SERVER_LOCATION
-          value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server"
+          value: "https://api-drools.app.suncoast.systems/kie-server/services/rest/server"
         - name: KIE_SERVER_CONTROLLER
-          value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller"
+          value: "https://workbench-drools.app.suncoast.systems/business-central/rest/controller"
         - name: KIE_MAVEN_REPO
-          value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/maven2"
+          value: "https://workbench-drools.app.suncoast.systems/business-central/maven2"
         - name: KIE_SERVER_MODE
           value: "DEVELOPMENT"
         - name: DROOLS_SERVER_FILTER_CLASSES
@@ -662,7 +662,7 @@ metadata:
   annotations:
     teleport.dev/name: "drools-kie-server"
     teleport.dev/protocol: "http"
-    teleport.dev/public_addr: "kie-server.drools.yourdomain.com"
+    teleport.dev/public_addr: "kie-server-drools.app.suncoast.systems"
     teleport.dev/labels: "environment=production,service=rules-execution"
   labels:
     app.kubernetes.io/name: kie-server
@@ -709,7 +709,7 @@ spec:
         - name: JAVA_OPTS
           value: "-Xms512m -Xmx2048m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"
         - name: KIE_SERVER_LOCATION
-          value: "http://kogito-decision-service.drools.svc.cluster.local:8080/kie-server/services/rest/server"
+          value: "https://kie-showcase-drools.app.suncoast.systems/kie-server/services/rest/server"
         - name: KIE_SERVER_USER
           value: "kieserver"
         - name: KIE_SERVER_PWD
@@ -752,7 +752,7 @@ metadata:
   annotations:
     teleport.dev/name: "drools-kie-server-showcase"
     teleport.dev/protocol: "http"
-    teleport.dev/public_addr: "kie-showcase.drools.yourdomain.com"
+    teleport.dev/public_addr: "kie-showcase-drools.app.suncoast.systems"
     teleport.dev/labels: "environment=production,service=rules-execution"
   labels:
     app.kubernetes.io/name: kogito-decision-service
@@ -867,9 +867,9 @@ data:
           return 404;
         }
         
-        # Root - redirect to KIE Workbench
+        # Root - redirect to KIE Workbench via external URL
         location = / {
-          return 302 /business-central/;
+          return 302 https://workbench-drools.app.suncoast.systems/business-central/;
         }
         
         # KIE Workbench - Business rules authoring interface
@@ -881,7 +881,8 @@ data:
           proxy_set_header Host $host;
           proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Proto https;
+          proxy_set_header X-Forwarded-Host $host;
           proxy_read_timeout 300s;
           proxy_connect_timeout 60s;
           proxy_send_timeout 60s;
@@ -906,7 +907,8 @@ data:
           proxy_set_header Host $host;
           proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Proto https;
+          proxy_set_header X-Forwarded-Host $host;
           
           # Security headers
           add_header X-Frame-Options DENY always;
@@ -928,7 +930,8 @@ data:
           proxy_set_header Host $host;
           proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Proto https;
+          proxy_set_header X-Forwarded-Host $host;
           
           # Security headers
           add_header X-Frame-Options DENY always;
@@ -1079,7 +1082,7 @@ spec:
         - name: QUARKUS_HTTP_HOST
           value: "0.0.0.0"
         - name: KOGITO_JOBS_SERVICE_URL
-          value: "http://kogito-jobs-service.drools.svc.cluster.local:8080"
+          value: "https://jobs-drools.app.suncoast.systems"
         readinessProbe:
           httpGet:
             path: /q/health/ready
@@ -1147,7 +1150,7 @@ spec:
         - name: QUARKUS_HTTP_HOST
           value: "0.0.0.0"
         - name: KOGITO_DATA_INDEX_URL
-          value: "http://kogito-data-index.drools.svc.cluster.local:8080"
+          value: "https://monitoring-drools.app.suncoast.systems"
         readinessProbe:
           httpGet:
             path: /q/health/ready
@@ -1201,7 +1204,7 @@ data:
         name: drools-rules-service
     drools:
       kie-server:
-        location: http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server
+        location: https://api-drools.app.suncoast.systems/kie-server/services/rest/server
         username: kieserver
         password: kieserver1!
       rules:
@@ -1255,7 +1258,7 @@ spec:
         - name: JAVA_OPTS
           value: "-Xms128m -Xmx512m"
         - name: KIE_SERVER_URL
-          value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server"
+          value: "https://api-drools.app.suncoast.systems/kie-server/services/rest/server"
         volumeMounts:
         - name: config
           mountPath: /app/config

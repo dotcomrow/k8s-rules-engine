@@ -504,15 +504,15 @@ spec:
             - { name: welcome-content,   mountPath: /opt/jboss/wildfly/welcome-content }
           readinessProbe:
             httpGet: { path: /business-central/, port: 8080 }
-            initialDelaySeconds: 60
-            periodSeconds: 15
-            timeoutSeconds: 10
-            failureThreshold: 5
+            initialDelaySeconds: 180
+            periodSeconds: 30
+            timeoutSeconds: 30
+            failureThreshold: 10
           livenessProbe:
             httpGet: { path: /business-central/, port: 8080 }
-            initialDelaySeconds: 120
-            periodSeconds: 30
-            timeoutSeconds: 10
+            initialDelaySeconds: 300
+            periodSeconds: 60
+            timeoutSeconds: 30
             failureThreshold: 3
           resources:
             requests: { cpu: "500m", memory: "1Gi" }

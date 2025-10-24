@@ -491,6 +491,7 @@ metadata:
     teleport.dev/public_addr: "workbench-drools.app.suncoast.systems"
     teleport.dev/labels: "environment=production,service=rules-authoring"
   labels:
+    teleport.dev/enroll: "true"
     app.kubernetes.io/name: kie-workbench
     app.kubernetes.io/component: authoring
     teleport.dev/app: "drools-workbench"
@@ -1071,6 +1072,55 @@ spec:
       labels:
         app: kogito-jobs-service
     spec:
+      initContainers:
+        - name: wait-for-services
+          image: alpine/k8s:1.31.4
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "🔄 Waiting for core Drools services to be ready..."
+              
+              # Wait for KIE Server to be ready
+              echo "⏳ Checking KIE Server availability..."
+              while true; do
+                if kubectl get pods -n drools -l app=kie-server --field-selector=status.phase=Running 2>/dev/null | grep -q "3/3.*Running"; then
+                  echo "✅ KIE Server pods are running"
+                  break
+                fi
+                echo "  └─ KIE Server not ready yet, waiting 10s..."
+                sleep 10
+              done
+              
+              # Wait for Decision Service to be ready
+              echo "⏳ Checking Decision Service availability..."
+              while true; do
+                if kubectl get pods -n drools -l app=kogito-decision-service --field-selector=status.phase=Running 2>/dev/null | grep -q "2/2.*Running"; then
+                  echo "✅ Decision Service pods are running"
+                  break
+                fi
+                echo "  └─ Decision Service not ready yet, waiting 10s..."
+                sleep 10
+              done
+              
+              # Wait for API Gateway to be ready (since jobs service might use external URLs)
+              echo "⏳ Checking API Gateway availability..."
+              while true; do
+                if kubectl get pods -n drools -l app=api-gateway --field-selector=status.phase=Running 2>/dev/null | grep -q "2/2.*Running"; then
+                  echo "✅ API Gateway pods are running"
+                  break
+                fi
+                echo "  └─ API Gateway not ready yet, waiting 10s..."
+                sleep 10
+              done
+              
+              # Additional wait to ensure services are fully initialized
+              echo "⏳ Waiting additional 30 seconds for services to fully initialize..."
+              sleep 30
+              
+              echo "🎉 All core services are ready! Starting Jobs Service..."
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "200m", memory: "256Mi" }
       containers:
       - name: kogito-jobs-service
         image: quay.io/kiegroup/kogito-jobs-service-ephemeral:1.40
@@ -1083,18 +1133,28 @@ spec:
           value: "0.0.0.0"
         - name: KOGITO_JOBS_SERVICE_URL
           value: "https://jobs-drools.app.suncoast.systems"
+        - name: QUARKUS_LOG_LEVEL
+          value: "INFO"
+        - name: QUARKUS_LOG_CONSOLE_ENABLE
+          value: "true"
+        - name: KOGITO_PERSISTENCE_TYPE
+          value: "ephemeral"
         readinessProbe:
           httpGet:
             path: /q/health/ready
             port: 8080
-          initialDelaySeconds: 10
-          periodSeconds: 5
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 5
         livenessProbe:
           httpGet:
             path: /q/health/live
             port: 8080
-          initialDelaySeconds: 15
-          periodSeconds: 10
+          initialDelaySeconds: 45
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
         resources:
           requests:
             memory: "128Mi"

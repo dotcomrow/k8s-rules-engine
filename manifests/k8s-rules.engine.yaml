@@ -270,6 +270,31 @@ roleRef:
   kind: Role
   name: job-status-reader-drools
 ---
+# RBAC for jobs service init container to read pod status
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader-drools
+  namespace: drools
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-reader-for-jobs-service
+  namespace: drools
+subjects:
+  - kind: ServiceAccount
+    name: drools-kogito-jobs
+    namespace: drools
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pod-reader-drools
+---
 
 apiVersion: v1
 kind: Namespace
@@ -1072,6 +1097,7 @@ spec:
       labels:
         app: kogito-jobs-service
     spec:
+      serviceAccountName: drools-kogito-jobs
       initContainers:
         - name: wait-for-services
           image: alpine/k8s:1.31.4

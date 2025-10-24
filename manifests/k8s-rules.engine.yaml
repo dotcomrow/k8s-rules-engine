@@ -624,25 +624,25 @@ spec:
           httpGet:
             path: /kie-server/services/rest/server
             port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 3
+          initialDelaySeconds: 90
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 5
         livenessProbe:
           httpGet:
             path: /kie-server/services/rest/server
             port: 8080
-          initialDelaySeconds: 60
+          initialDelaySeconds: 120
           periodSeconds: 30
-          timeoutSeconds: 5
+          timeoutSeconds: 10
           failureThreshold: 3
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "300m"
+            memory: "1Gi"
+            cpu: "500m"
           limits:
-            memory: "2Gi"
-            cpu: "1000m"
+            memory: "3Gi"
+            cpu: "2000m"
 
 ---
 # =========================
@@ -1066,7 +1066,7 @@ spec:
     spec:
       containers:
       - name: kogito-jobs-service
-        image: quay.io/kiegroup/kogito-jobs-service-inmemory:1.40
+        image: quay.io/kiegroup/kogito-jobs-service-inmemory:1.13.2
         ports:
         - containerPort: 8080
         env:

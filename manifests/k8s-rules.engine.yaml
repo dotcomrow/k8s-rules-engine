@@ -602,7 +602,7 @@ spec:
             export KIE_MAVEN_REPO_PWD="$ADMIN_PASS"
             
             echo "🚀 Starting KIE Server with Vault credentials..."
-            exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0
+            exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml
         env:
         - name: JAVA_OPTS
           value: "-Xms256m -Xmx1024m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=256m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"
@@ -620,6 +620,14 @@ spec:
           value: "true"
         - name: KIE_SERVER_BYPASS_AUTH_USER
           value: "false"
+        - name: KIE_SERVER_JMS_QUEUE_REQUEST
+          value: "queue/KIE.SERVER.REQUEST"
+        - name: KIE_SERVER_JMS_QUEUE_RESPONSE
+          value: "queue/KIE.SERVER.RESPONSE"
+        - name: KIE_SERVER_EXECUTOR_JMS_QUEUE
+          value: "queue/KIE.SERVER.EXECUTOR"
+        - name: MESSAGING_SERIALIZERS
+          value: "org.apache.activemq.artemis.jms.client.ActiveMQObjectMessage,org.apache.activemq.artemis.jms.client.ActiveMQMessage,org.apache.activemq.artemis.jms.client.ActiveMQTextMessage"
         readinessProbe:
           httpGet:
             path: /kie-server/services/rest/server

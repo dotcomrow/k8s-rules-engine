@@ -488,6 +488,12 @@ spec:
             echo "� Disabling Wildfly welcome content handler..."
             
             echo "�🚀 Starting KIE Workbench with Vault credentials..."
+            # Completely disable welcome content handler by modifying standalone.xml before startup
+            if [ -f /opt/jboss/wildfly/standalone/configuration/standalone.xml ]; then
+              sed -i '/<location name="\/" handler="welcome-content"\/>/d' /opt/jboss/wildfly/standalone/configuration/standalone.xml
+              sed -i '/<file name="welcome-content" path="\${jboss.home.dir}\/welcome-content"\/>/d' /opt/jboss/wildfly/standalone/configuration/standalone.xml
+            fi
+            
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -Djboss.as.management.blocking.timeout=3600
         env:
         - name: JAVA_OPTS
@@ -696,13 +702,11 @@ spec:
             
             echo "🚀 Starting KIE Server with Vault credentials..."
             
-            echo "🔧 Disabling Wildfly welcome handler..."
-            cat > /tmp/disable-welcome.cli << 'EOF'
-            embed-server --std-out=echo
-            /subsystem=undertow/server=default-server/host=default-host/location="/":remove
-            stop-embedded-server
-            EOF
-            /opt/jboss/wildfly/bin/jboss-cli.sh --file=/tmp/disable-welcome.cli
+            # Completely disable welcome content handler by modifying standalone-full.xml before startup
+            if [ -f /opt/jboss/wildfly/standalone/configuration/standalone-full.xml ]; then
+              sed -i '/<location name="\/" handler="welcome-content"\/>/d' /opt/jboss/wildfly/standalone/configuration/standalone-full.xml
+              sed -i '/<file name="welcome-content" path="\${jboss.home.dir}\/welcome-content"\/>/d' /opt/jboss/wildfly/standalone/configuration/standalone-full.xml
+            fi
             
             # Ensure KIE Server deploys at root for now
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0
@@ -843,13 +847,11 @@ spec:
           - |
             echo "🚀 Starting Decision Service..."
             
-            echo "🔧 Disabling Wildfly welcome handler..."
-            cat > /tmp/disable-welcome.cli << 'EOF'
-            embed-server --std-out=echo
-            /subsystem=undertow/server=default-server/host=default-host/location="/":remove
-            stop-embedded-server
-            EOF
-            /opt/jboss/wildfly/bin/jboss-cli.sh --file=/tmp/disable-welcome.cli
+            # Completely disable welcome content handler by modifying standalone-full.xml before startup
+            if [ -f /opt/jboss/wildfly/standalone/configuration/standalone-full.xml ]; then
+              sed -i '/<location name="\/" handler="welcome-content"\/>/d' /opt/jboss/wildfly/standalone/configuration/standalone-full.xml
+              sed -i '/<file name="welcome-content" path="\${jboss.home.dir}\/welcome-content"\/>/d' /opt/jboss/wildfly/standalone/configuration/standalone-full.xml
+            fi
             
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml
         ports:

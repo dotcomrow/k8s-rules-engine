@@ -631,7 +631,7 @@ spec:
         readinessProbe:
           httpGet:
             path: /kie-server/services/rest/server
-            port: 9990
+            port: 8080
           initialDelaySeconds: 90
           periodSeconds: 15
           timeoutSeconds: 10
@@ -639,7 +639,7 @@ spec:
         livenessProbe:
           httpGet:
             path: /kie-server/services/rest/server
-            port: 9990
+            port: 8080
           initialDelaySeconds: 120
           periodSeconds: 30
           timeoutSeconds: 10
@@ -828,7 +828,7 @@ data:
       }
       
       upstream kie_server {
-        server kie-server.drools.svc.cluster.local:9990;
+        server kie-server.drools.svc.cluster.local:8080;
         keepalive 32;
       }
       
@@ -1074,7 +1074,7 @@ spec:
     spec:
       containers:
       - name: kogito-jobs-service
-        image: quay.io/kiegroup/kogito-jobs-service-inmemory:1.13.2
+        image: quay.io/kiegroup/kogito-jobs-service-inmemory:1.44.0
         ports:
         - containerPort: 8080
         env:

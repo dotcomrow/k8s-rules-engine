@@ -521,6 +521,8 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "workbench-drools.app.suncoast.systems"
     teleport.dev/description: "KIE Workbench - Business rules authoring and management interface"
+    teleport.dev/port: "8080"
+    teleport.dev/uri: "/business-central/"
     app.kubernetes.io/name: kie-workbench
     app.kubernetes.io/component: authoring
     teleport.dev/app: "drools-workbench"
@@ -652,6 +654,8 @@ spec:
           value: "true"
         - name: KIE_SERVER_BYPASS_AUTH_USER
           value: "false"
+        - name: KIE_SERVER_CONTEXT
+          value: "/kie-server"
         - name: KIE_SERVER_JMS_QUEUE_REQUEST
           value: "queue/KIE.SERVER.REQUEST"
         - name: KIE_SERVER_JMS_QUEUE_RESPONSE
@@ -696,6 +700,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "kie-server-drools.app.suncoast.systems"
     teleport.dev/description: "KIE Server - Rules execution runtime and management API"
+    teleport.dev/uri: "/kie-server/"
   labels:
     app.kubernetes.io/name: kie-server
     app.kubernetes.io/component: runtime
@@ -741,7 +746,7 @@ spec:
         - name: JAVA_OPTS
           value: "-Xms512m -Xmx2048m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"
         - name: KIE_SERVER_LOCATION
-          value: "https://kie-showcase-drools.app.suncoast.systems/kie-server/services/rest/server"
+          value: "https://decisions-drools.app.suncoast.systems/kie-server/services/rest/server"
         - name: KIE_SERVER_USER
           value: "kieserver"
         - name: KIE_SERVER_PWD
@@ -786,6 +791,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "decisions-drools.app.suncoast.systems"
     teleport.dev/description: "KIE Server Showcase - Production rules execution and decision API"
+    teleport.dev/uri: "/kie-server/"
   labels:
     app.kubernetes.io/name: kogito-decision-service
     app.kubernetes.io/component: rules-execution
@@ -886,9 +892,11 @@ data:
         
         # CORS preflight handling moved to individual location blocks
         
-        # Root - redirect to KIE Workbench via external URL
+        # Root - API Gateway status page
         location = / {
-          return 302 https://workbench-drools.app.suncoast.systems/business-central/;
+          access_log off;
+          add_header Content-Type application/json always;
+          return 200 '{"status":"healthy","services":{"business-central":"/business-central/","kie-server":"/kie-server/","health":"/health","api-docs":"/api/docs"},"individual_access":{"workbench":"https://workbench-drools.app.suncoast.systems/business-central/","kie-server":"https://kie-server-drools.app.suncoast.systems/","decisions":"https://decisions-drools.app.suncoast.systems/","jobs":"https://jobs-drools.app.suncoast.systems/","monitoring":"https://monitoring-drools.app.suncoast.systems/"}}';
         }
         
         # KIE Workbench - Business rules authoring interface
@@ -1203,6 +1211,10 @@ spec:
           value: "true"
         - name: KOGITO_PERSISTENCE_TYPE
           value: "ephemeral"
+        - name: QUARKUS_SMALLRYE_OPENAPI_PATH
+          value: "/q/openapi"
+        - name: QUARKUS_SWAGGER_UI_ALWAYS_INCLUDE
+          value: "true"
         readinessProbe:
           httpGet:
             path: /q/health/ready
@@ -1369,12 +1381,16 @@ spec:
         - -c
         - |
           echo "Starting Drools Rules Service..."
-          echo "This is a placeholder for your custom Drools application"
-          echo "Replace this with your actual Drools application image"
-          echo "Server running on port 8080"
+          apt-get update && apt-get install -y netcat-openbsd
+          echo "HTTP/1.1 200 OK
+          Content-Type: application/json
+          Connection: close
+
+          {\"service\":\"Drools Rules Service\",\"status\":\"running\",\"message\":\"This is a placeholder service. Replace with your actual Drools application.\",\"timestamp\":\"$(date -Iseconds)\",\"endpoints\":{\"/health\":\"Health check\",\"/\":\"Service info\"}}" > /tmp/response.txt
+          
           while true; do
-            echo "$(date): Rules service running..."
-            sleep 60
+            echo "$(date): Rules service running on port 8080..."
+            nc -l -p 8080 -q 1 < /tmp/response.txt || true
           done
         ports:
         - containerPort: 8080
@@ -1477,6 +1493,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "jobs-drools.app.suncoast.systems"
     teleport.dev/description: "Kogito Jobs Service - Asynchronous job processing and scheduling"
+    teleport.dev/uri: "/q/dev/"
   labels:
     app.kubernetes.io/name: kogito-jobs-service
     app.kubernetes.io/component: jobs
@@ -1505,6 +1522,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "monitoring-drools.app.suncoast.systems"
     teleport.dev/description: "Kogito Data Index - Process and decision monitoring and analytics"
+    teleport.dev/uri: "/graphiql/"
   labels:
     app.kubernetes.io/name: kogito-data-index
     app.kubernetes.io/component: monitoring

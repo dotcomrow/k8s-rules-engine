@@ -513,9 +513,8 @@ metadata:
   annotations:
     teleport.dev/name: "drools-workbench"
     teleport.dev/protocol: "http"
-    teleport.dev/public_addr: "workbench-drools.app.suncoast.systems"
-    teleport.dev/labels: "environment=production,service=rules-authoring"
-    teleport.dev/uri: "/business-central/"
+    teleport.dev/public-addr: "workbench-drools.app.suncoast.systems"
+    teleport.dev/path: "business-central/"
   labels:
     teleport.dev/enroll: "true"
     app.kubernetes.io/name: kie-workbench
@@ -689,9 +688,8 @@ metadata:
   annotations:
     teleport.dev/name: "drools-kie-server"
     teleport.dev/protocol: "http"
-    teleport.dev/public_addr: "kie-server-drools.app.suncoast.systems"
-    teleport.dev/labels: "environment=production,service=rules-execution"
-    teleport.dev/uri: "/kie-server/"
+    teleport.dev/public-addr: "kie-server-drools.app.suncoast.systems"
+    teleport.dev/path: "kie-server/"
   labels:
     app.kubernetes.io/name: kie-server
     app.kubernetes.io/component: runtime
@@ -780,9 +778,8 @@ metadata:
   annotations:
     teleport.dev/name: "drools-kie-server-showcase"
     teleport.dev/protocol: "http"
-    teleport.dev/public_addr: "kie-showcase-drools.app.suncoast.systems"
-    teleport.dev/labels: "environment=production,service=rules-execution"
-    teleport.dev/uri: "/kie-server/"
+    teleport.dev/public-addr: "kie-showcase-drools.app.suncoast.systems"
+    teleport.dev/path: "kie-server/"
   labels:
     app.kubernetes.io/name: kogito-decision-service
     app.kubernetes.io/component: rules-execution
@@ -1405,8 +1402,7 @@ metadata:
   annotations:
     teleport.dev/name: "drools-api-gateway"
     teleport.dev/protocol: "http"
-    teleport.dev/public_addr: "api-drools.app.suncoast.systems"
-    teleport.dev/labels: "environment=production,service=api-gateway"
+    teleport.dev/public-addr: "api-drools.app.suncoast.systems"
   labels:
     teleport.dev/enroll: "true"
     app.kubernetes.io/name: api-gateway
@@ -1434,9 +1430,8 @@ metadata:
   annotations:
     teleport.dev/name: "drools-kogito-jobs"
     teleport.dev/protocol: "http"
-    teleport.dev/public_addr: "jobs-drools.app.suncoast.systems"
-    teleport.dev/labels: "environment=production,service=job-processing"
-    teleport.dev/uri: "/q/health"
+    teleport.dev/public-addr: "jobs-drools.app.suncoast.systems"
+    teleport.dev/path: "q/health"
   labels:
     teleport.dev/enroll: "true"
     app.kubernetes.io/name: kogito-jobs-service
@@ -1464,9 +1459,8 @@ metadata:
   annotations:
     teleport.dev/name: "drools-kogito-data-index"
     teleport.dev/protocol: "http"
-    teleport.dev/public_addr: "monitoring-drools.app.suncoast.systems"
-    teleport.dev/labels: "environment=production,service=monitoring"
-    teleport.dev/uri: "/graphql"
+    teleport.dev/public-addr: "monitoring-drools.app.suncoast.systems"
+    teleport.dev/path: "graphql"
   labels:
     teleport.dev/enroll: "true"
     app.kubernetes.io/name: kogito-data-index
@@ -1494,8 +1488,7 @@ metadata:
   annotations:
     teleport.dev/name: "drools-rules-service"
     teleport.dev/protocol: "http"
-    teleport.dev/public_addr: "rules-drools.app.suncoast.systems"
-    teleport.dev/labels: "environment=production,service=embedded-rules"
+    teleport.dev/public-addr: "rules-drools.app.suncoast.systems"
   labels:
     teleport.dev/enroll: "true"
     app.kubernetes.io/name: drools-rules-service

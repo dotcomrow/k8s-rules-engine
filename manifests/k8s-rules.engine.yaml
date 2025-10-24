@@ -460,11 +460,31 @@ spec:
             export KIE_CONNECTION_USER="$(cat /vault/secrets/db-username)"
             export KIE_CONNECTION_PASSWORD="$(cat /vault/secrets/db-password)"
             
+            # Configure Wildfly to redirect root to business-central
+            mkdir -p /tmp/root-redirect.war
+            cat > /tmp/root-redirect.war/index.html << 'EOF'
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta http-equiv="refresh" content="0; url=/business-central/">
+                <title>Redirecting to Business Central...</title>
+            </head>
+            <body>
+                <p>Redirecting to <a href="/business-central/">Business Central</a>...</p>
+                <script>window.location.href='/business-central/';</script>
+            </body>
+            </html>
+            EOF
+            cd /tmp && jar -cf root.war -C root-redirect.war .
+            cp root.war /opt/jboss/wildfly/standalone/deployments/
+            
             echo "🚀 Starting KIE Workbench with Vault credentials..."
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0
         env:
         - name: JAVA_OPTS
           value: "-Xms512m -Xmx2048m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=512m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8 -Dorg.kie.server.bypass.auth.user=false -Dorg.kie.workbench.profile=FULL -Dorg.uberfire.nio.git.daemon.host=0.0.0.0 -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0"
+        - name: KIE_WORKBENCH_INDEX_REDIRECT
+          value: "true"
         - name: KIE_CONNECTION_URL
           value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/drools?currentSchema=drools"
         - name: KIE_CONNECTION_DRIVER_CLASS
@@ -635,6 +655,24 @@ spec:
             export KIE_MAVEN_REPO_USER="$ADMIN_USER"
             export KIE_MAVEN_REPO_PWD="$ADMIN_PASS"
             
+            # Configure Wildfly to redirect root to KIE Server API
+            mkdir -p /tmp/root-redirect.war
+            cat > /tmp/root-redirect.war/index.html << 'EOF'
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta http-equiv="refresh" content="0; url=/kie-server/services/rest/server">
+                <title>Redirecting to KIE Server API...</title>
+            </head>
+            <body>
+                <p>Redirecting to <a href="/kie-server/services/rest/server">KIE Server REST API</a>...</p>
+                <script>window.location.href='/kie-server/services/rest/server';</script>
+            </body>
+            </html>
+            EOF
+            cd /tmp && jar -cf root.war -C root-redirect.war .
+            cp root.war /opt/jboss/wildfly/standalone/deployments/
+            
             echo "🚀 Starting KIE Server with Vault credentials..."
             # Ensure KIE Server deploys at root for now
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0
@@ -743,6 +781,31 @@ spec:
       containers:
       - name: kogito-decision-service
         image: jboss/kie-server-showcase:latest
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -euo pipefail
+            
+            # Configure Wildfly to redirect root to KIE Server API
+            mkdir -p /tmp/root-redirect.war
+            cat > /tmp/root-redirect.war/index.html << 'EOF'
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta http-equiv="refresh" content="0; url=/kie-server/services/rest/server">
+                <title>Redirecting to KIE Server API...</title>
+            </head>
+            <body>
+                <p>Redirecting to <a href="/kie-server/services/rest/server">KIE Server REST API</a>...</p>
+                <script>window.location.href='/kie-server/services/rest/server';</script>
+            </body>
+            </html>
+            EOF
+            cd /tmp && jar -cf root.war -C root-redirect.war .
+            cp root.war /opt/jboss/wildfly/standalone/deployments/
+            
+            echo "🚀 Starting KIE Server Showcase..."
+            exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0
         ports:
         - containerPort: 8080
         env:
@@ -1472,6 +1535,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "api-drools.app.suncoast.systems"
     teleport.dev/description: "API Gateway - Main entry point for Drools platform providing routing and load balancing to backend services"
+    teleport.dev/uri: "/"
   labels:
     teleport.dev/enroll: "true"
     app.kubernetes.io/name: api-gateway

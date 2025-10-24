@@ -1092,21 +1092,6 @@ spec:
           name: api-gateway-nginx-conf
 
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: api-gateway
-  namespace: drools
-spec:
-  selector:
-    app: api-gateway
-  ports:
-  - name: http
-    port: 8080
-    targetPort: 8080
-  type: ClusterIP
-
----
 # =========================
 # Kogito Jobs Service - Async Job Processing
 # Handles scheduled and delayed rule executions
@@ -1425,6 +1410,12 @@ spec:
 # =========================
 # Teleport Service - API Gateway (Unified Web Interface)
 # =========================
+# Access via: api-drools.app.suncoast.systems (configured public address)
+# Note: Auto-generated Teleport URL (drools-api-gateway.teleport.app.suncoast.systems) will not work
+# All services accessible through API gateway:
+#   - Business Central: /business-central/
+#   - KIE Server: /kie-server/ 
+#   - Health Check: /health
 apiVersion: v1
 kind: Service
 metadata:

@@ -26,11 +26,11 @@ spec:
           command: ["/bin/sh","-c"]
           args:
             - |
-              echo "🔁 Copying 'vault-root-token' from vault → drools..."
+              echo "Copying 'vault-root-token' from vault → drools..."
               kubectl get secret vault-root-token -n vault -o yaml | \
                 sed 's/namespace: vault/namespace: drools/' | \
                 kubectl apply -f -
-              echo "✅ Secret copied successfully."
+              echo "Secret copied."
 ---
 apiVersion: batch/v1
 kind: Job
@@ -56,7 +56,6 @@ spec:
           command: ["/bin/sh","-c"]
           args:
             - |
-              #!/bin/sh
               set -eu
 
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
@@ -72,74 +71,62 @@ spec:
               export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
 
               while [ ! -f /vault-token/VAULT_TOKEN ]; do
-                echo "🔁 Waiting for Vault token file..."
+                echo "Waiting for Vault token file..."
                 sleep 2
               done
               export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
 
-              echo "🧩 Ensuring KV v2 at 'secret/'..."
+              echo "Ensuring KV v2 at 'secret/'..."
               while :; do
                 if vault secrets list -format=json 2>/dev/null \
                   | jq -e '."secret/".type=="kv" and ."secret/".options.version=="2"' >/dev/null; then
-                  echo "✅ 'secret/' is KVv2"
+                  echo "'secret/' is KVv2"
                   break
                 fi
                 if vault secrets list -format=json 2>/dev/null | jq -e 'has("secret/")' >/dev/null; then
-                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."
+                  echo "'secret/' exists but is not KVv2; please migrate manually."
                   exit 1
                 fi
                 vault secrets enable -path=secret -version=2 kv && break
                 sleep 2
               done
 
-              echo "🔐 Seeding Drools admin creds at secret/drools/admin (if missing)..."
+              echo "Seeding secret/drools/admin (if missing)..."
               if ! vault kv get -format=json secret/drools/admin >/dev/null 2>&1; then
                 PASS="$(tr -dc 'A-Za-z0-9@#%^+=_' </dev/urandom | head -c 32)"
                 vault kv put secret/drools/admin username=admin password="$PASS"
-                echo "✅ Seeded admin secret at secret/drools/admin"
-              else
-                echo "✅ Admin secret already present"
               fi
 
-              echo "🔐 Seeding KIE Server user creds at secret/drools/kie-user (if missing)..."
+              echo "Seeding secret/drools/kie-user (if missing)..."
               if ! vault kv get -format=json secret/drools/kie-user >/dev/null 2>&1; then
                 PASS="$(tr -dc 'A-Za-z0-9@#%^+=_' </dev/urandom | head -c 32)"
                 vault kv put secret/drools/kie-user username=kieserver password="$PASS"
-                echo "✅ Seeded kie-user secret at secret/drools/kie-user"
-              else
-                echo "✅ KIE user secret already present"
               fi
 
-              until getent hosts "$PGHOST" >/dev/null 2>&1; do echo "🔄 Waiting for DNS for $PGHOST..."; sleep 3; done
-              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
-              echo "✅ Yugabyte reachable"
+              until getent hosts "$PGHOST" >/dev/null 2>&1; do echo "Waiting for DNS for $PGHOST..."; sleep 3; done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
 
-              echo "🔐 Waiting for secret/${VAULTADMIN_USER} to exist in Vault..."
+              echo "Waiting for secret/${VAULTADMIN_USER}..."
               VAULTADMIN_PASS=""
               while :; do
                 OUT="$(vault kv get -format=json "secret/${VAULTADMIN_USER}" 2>/dev/null || true)"
                 if [ -n "${OUT}" ]; then
                   VAULTADMIN_PASS="$(printf '%s' "$OUT" | jq -r '.data.data.password // .data.data.value // empty')"
-                  if [ -n "${VAULTADMIN_PASS}" ] && [ "${VAULTADMIN_PASS}" != "null" ]; then
-                    echo "✅ Found secret/${VAULTADMIN_USER}"
-                    break
-                  fi
+                  [ -n "${VAULTADMIN_PASS}" ] && [ "${VAULTADMIN_PASS}" != "null" ] && break
                 fi
-                echo "⏳ secret/${VAULTADMIN_USER} not ready yet; retrying in 5s..."
                 sleep 5
               done
               export PGPASSWORD="$VAULTADMIN_PASS"
 
               while :; do
                 DB_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)"
-                [ "$DB_EXISTS" = "1" ] && { echo "✅ DB '$DB' exists"; break; }
-                echo "📦 Creating DB '$DB' owned by $VAULTADMIN_USER..."
-                createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null && { echo "✅ DB created"; break; }
-                echo "🔁 Retry create DB in 3s..."; sleep 3
+                [ "$DB_EXISTS" = "1" ] && break
+                createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null && break
+                sleep 3
               done
 
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
-              DO \$\$
+              DO $$
               BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROLE_GROUP}') THEN
                   CREATE ROLE ${ROLE_GROUP} NOLOGIN;
@@ -148,7 +135,7 @@ spec:
                   CREATE ROLE ${ROLE_OWNER} LOGIN INHERIT;
                 END IF;
               END
-              \$\$;
+              $$;
               GRANT ${ROLE_GROUP} TO ${ROLE_OWNER};
               GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};
               EOSQL
@@ -158,10 +145,6 @@ spec:
               CREATE SCHEMA IF NOT EXISTS kie_server AUTHORIZATION ${ROLE_OWNER};
               CREATE SCHEMA IF NOT EXISTS kogito AUTHORIZATION ${ROLE_OWNER};
               CREATE SCHEMA IF NOT EXISTS data_index AUTHORIZATION ${ROLE_OWNER};
-              ALTER SCHEMA drools OWNER TO ${ROLE_OWNER};
-              ALTER SCHEMA kie_server OWNER TO ${ROLE_OWNER};
-              ALTER SCHEMA kogito OWNER TO ${ROLE_OWNER};
-              ALTER SCHEMA data_index OWNER TO ${ROLE_OWNER};
               ALTER ROLE ${ROLE_OWNER} SET search_path = drools,kie_server,kogito,data_index,public;
               GRANT CONNECT ON DATABASE ${DB} TO ${ROLE_OWNER};
               EOSQL
@@ -170,26 +153,18 @@ spec:
                 psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
               SET ROLE ${ROLE_OWNER};
               GRANT USAGE, CREATE ON SCHEMA ${schema} TO ${ROLE_GROUP};
-              GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA ${schema} TO ${ROLE_GROUP};
-              GRANT USAGE, SELECT                     ON ALL SEQUENCES IN SCHEMA ${schema} TO ${ROLE_GROUP};
+              GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${ROLE_GROUP};
+              GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO ${ROLE_GROUP};
               ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema}
-                GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES   TO ${ROLE_GROUP};
+                GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${ROLE_GROUP};
               ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema}
-                GRANT USAGE, SELECT                ON SEQUENCES TO ${ROLE_GROUP};
-              GRANT USAGE, CREATE ON SCHEMA ${schema} TO ${VAULTADMIN_USER};
-              GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA ${schema} TO ${VAULTADMIN_USER};
-              GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ${schema} TO ${VAULTADMIN_USER};
-              ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema} GRANT ALL ON TABLES    TO ${VAULTADMIN_USER};
-              ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema} GRANT ALL ON SEQUENCES TO ${VAULTADMIN_USER};
+                GRANT USAGE, SELECT ON SEQUENCES TO ${ROLE_GROUP};
               RESET ROLE;
               EOSQL
               done
 
-              echo "✅ Schemas & privileges prepared for Drools components"
-
               if ! vault secrets list -format=json | jq -e 'has("yugabyte-db/")' >/dev/null 2>&1; then
                 vault secrets enable -path=yugabyte-db database
-                echo "✅ Enabled database secrets engine"
               fi
 
               vault write yugabyte-db/static-roles/drools-app \
@@ -197,8 +172,6 @@ spec:
                 username="${ROLE_OWNER}" \
                 rotation_statements="ALTER ROLE \"{{name}}\" WITH PASSWORD '{{password}}';" \
                 rotation_period="24h"
-
-              echo "✅ Configured Vault database connection and static role"
 
               vault policy write "drools" - <<'EOF'
               path "yugabyte-db/static-creds/drools-app"           { capabilities = ["read"] }
@@ -217,10 +190,7 @@ spec:
               DB_USER="$(printf '%s' "$CREDS_JSON" | jq -r .data.username)"
               DB_PASS="$(printf '%s' "$CREDS_JSON" | jq -r .data.password)"
               export PGPASSWORD="$DB_PASS"
-              echo "🔎 Sanity check as \$DB_USER=$DB_USER"
               psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB" -c "SELECT current_user, current_schema();"
-
-              echo "🎉 Drools DB prepared; Vault static role + policy + K8s binding ready."
           volumeMounts:
             - name: root-token
               mountPath: /vault-token
@@ -343,8 +313,7 @@ metadata:
 
 ---
 # =========================
-# KIE Workbench - Web Authoring and Deployment GUI
-# (Business Central)
+# KIE Workbench - Business Central
 # =========================
 apiVersion: apps/v1
 kind: Deployment
@@ -392,10 +361,9 @@ spec:
           KIE_SERVER_PASSWORD={{ .Data.data.password }}
           {{- end -}}
 
-        # Linkerd: allow direct Postgres/Vault egress from this pod
+        # Allow direct Postgres/Vault egress
         config.linkerd.io/skip-outbound-ports: "8200,5433"
 
-        # Teleport service annotation
         teleport.dev/name: "drools-workbench"
     spec:
       serviceAccountName: drools-workbench
@@ -405,7 +373,7 @@ spec:
           command: ["/bin/sh","-lc"]
           args:
             - |
-              echo "Waiting for Job vault/drools-yugabyte-config to complete (will retry until ready)..."
+              echo "Waiting for Job vault/drools-yugabyte-config to complete..."
               while true; do
                 if ! kubectl -n vault get job drools-yugabyte-config >/dev/null 2>&1; then
                   echo "  └─ job not found yet..."
@@ -414,16 +382,13 @@ spec:
                 fi
                 SUCC="$(kubectl -n vault get job drools-yugabyte-config -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
                 if [ "$SUCC" -ge 1 ] 2>/dev/null; then
-                  echo "✅ DB bootstrap job is complete."
+                  echo "DB bootstrap job complete."
                   break
                 fi
                 if kubectl -n vault wait --for=condition=complete job/drools-yugabyte-config --timeout=10s >/dev/null 2>&1; then
-                  echo "✅ DB bootstrap job is complete."
+                  echo "DB bootstrap job complete."
                   break
                 fi
-                FAIL="$(kubectl -n vault get job drools-yugabyte-config -o jsonpath='{.status.failed}' 2>/dev/null || true)";  FAIL="${FAIL:-0}"
-                ACTV="$(kubectl -n vault get job drools-yugabyte-config -o jsonpath='{.status.active}' 2>/dev/null || true)";  ACTV="${ACTV:-0}"
-                echo "  └─ still waiting... succeeded=${SUCC} failed=${FAIL} active=${ACTV}"
                 sleep 5
               done
         - name: setup-redirect
@@ -431,7 +396,7 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              echo "🔧 Setting up Business Central redirect..."
+              echo "Setting up Business Central redirect..."
               rm -rf /opt/jboss/wildfly/welcome-content/*
               cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
               <!DOCTYPE html>
@@ -446,7 +411,7 @@ spec:
               </body>
               </html>
               EOF
-              echo "✅ Redirect setup complete"
+              echo "Redirect setup complete"
           volumeMounts:
           - name: welcome-content
             mountPath: /opt/jboss/wildfly/welcome-content
@@ -460,9 +425,19 @@ spec:
           name: debug
         - containerPort: 9418
           name: git
-        # Start normally; no Undertow XML edits needed
-        command: ["/opt/jboss/wildfly/bin/standalone.sh"]
-        args: ["-b","0.0.0.0","-bmanagement","0.0.0.0"]
+        # Wrapper: export envs from Vault files, then run official bootstrap
+        command: ["/bin/sh","-lc"]
+        args:
+          - |
+            set -eu
+            # Source Vault-injected files
+            [ -f /vault/secrets/drools-admin ] && . /vault/secrets/drools-admin
+            [ -f /vault/secrets/kie-user ] && . /vault/secrets/kie-user
+            # Export envs expected by the image bootstrap
+            [ -n "${ADMIN_USER:-}" ] && export KIE_ADMIN_USER="$ADMIN_USER"
+            [ -n "${ADMIN_PASS:-}" ] && export KIE_ADMIN_PWD="$ADMIN_PASS"
+            # Optional DB vars (left off for now to boot clean)
+            exec /opt/jboss/run.sh
         env:
         - name: JAVA_OPTS
           value: "-Xms512m -Xmx2048m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=512m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8 -Dorg.kie.server.bypass.auth.user=false -Dorg.kie.workbench.profile=FULL -Dorg.uberfire.nio.git.daemon.host=0.0.0.0 -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0"
@@ -515,9 +490,7 @@ spec:
         emptyDir: {}
 
 ---
-# =========================
-# Teleport Service - KIE Workbench (Business Rules Authoring)
-# =========================
+# Teleport Service - KIE Workbench
 apiVersion: v1
 kind: Service
 metadata:
@@ -550,7 +523,7 @@ spec:
 
 ---
 # =========================
-# KIE Server - Embeddable Rules Runtime
+# KIE Server - Runtime
 # =========================
 apiVersion: apps/v1
 kind: Deployment
@@ -590,10 +563,9 @@ spec:
           KIE_SERVER_PASSWORD={{ .Data.data.password }}
           {{- end -}}
 
-        # Linkerd: allow direct Vault egress
+        # Allow direct Vault egress
         config.linkerd.io/skip-outbound-ports: "8200"
 
-        # Teleport service annotation
         teleport.dev/name: "drools-kie-server"
     spec:
       serviceAccountName: drools-kie-server
@@ -611,10 +583,7 @@ spec:
                   continue
                 fi
                 SUCC="$(kubectl -n vault get job drools-yugabyte-config -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
-                if [ "$SUCC" -ge 1 ] 2>/dev/null; then
-                  echo "✅ DB bootstrap job is complete."
-                  break
-                fi
+                [ "$SUCC" -ge 1 ] && break
                 sleep 5
               done
         - name: setup-redirect
@@ -622,7 +591,7 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              echo "🔧 Setting up KIE Server redirect..."
+              echo "Setting up KIE Server redirect..."
               rm -rf /opt/jboss/wildfly/welcome-content/*
               cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
               <!DOCTYPE html>
@@ -637,7 +606,7 @@ spec:
               </body>
               </html>
               EOF
-              echo "✅ Redirect setup complete"
+              echo "Redirect setup complete"
           volumeMounts:
           - name: welcome-content
             mountPath: /opt/jboss/wildfly/welcome-content
@@ -649,9 +618,21 @@ spec:
         volumeMounts:
         - name: welcome-content
           mountPath: /opt/jboss/wildfly/welcome-content
-        # Start normally; no Undertow edits
-        command: ["/opt/jboss/wildfly/bin/standalone.sh"]
-        args: ["-b","0.0.0.0","-bmanagement","0.0.0.0","-c","standalone-full.xml"]
+        # Wrapper: source Vault files → export envs → run official bootstrap
+        command: ["/bin/sh","-lc"]
+        args:
+          - |
+            set -eu
+            [ -f /vault/secrets/drools-admin ] && . /vault/secrets/drools-admin
+            [ -f /vault/secrets/kie-user ] && . /vault/secrets/kie-user
+            # KIE Server identity & controller auth
+            [ -n "${KIE_SERVER_USER:-}" ] || export KIE_SERVER_USER="${KIE_SERVER_USER:-${KIE_SERVER_USER_NAME:-kieserver}}"
+            [ -n "${KIE_SERVER_PASSWORD:-}" ] || export KIE_SERVER_PWD="${KIE_SERVER_PASSWORD:-kieserver1!}"
+            [ -n "${KIE_SERVER_PWD:-}" ] || export KIE_SERVER_PWD="${KIE_SERVER_PASSWORD:-kieserver1!}"
+            # Prefer admin for controller (works out of the box)
+            [ -n "${ADMIN_USER:-}" ] && export KIE_SERVER_CONTROLLER_USER="$ADMIN_USER"
+            [ -n "${ADMIN_PASS:-}" ] && export KIE_SERVER_CONTROLLER_PWD="$ADMIN_PASS"
+            exec /opt/jboss/run.sh
         env:
         - name: JAVA_OPTS
           value: "-Xms256m -Xmx1024m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=256m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"
@@ -707,9 +688,7 @@ spec:
         emptyDir: {}
 
 ---
-# =========================
-# Teleport Service - KIE Server (Rules Execution Runtime)
-# =========================
+# Teleport Service - KIE Server
 apiVersion: v1
 kind: Service
 metadata:
@@ -736,7 +715,7 @@ spec:
 
 ---
 # =========================
-# KIE Server Showcase - Production Business Rules Execution Server
+# KIE Server Showcase (Decisions)
 # =========================
 apiVersion: apps/v1
 kind: Deployment
@@ -761,7 +740,7 @@ spec:
           command: ["/bin/bash", "-c"]
           args:
             - |
-              echo "🔧 Setting up Decision Service redirect..."
+              echo "Setting up Decision Service redirect..."
               mkdir -p /shared/welcome-content
               cat > /shared/welcome-content/index.html << 'EOF'
               <!DOCTYPE html>
@@ -776,7 +755,7 @@ spec:
               </body>
               </html>
               EOF
-              echo "✅ Redirect setup complete"
+              echo "Redirect setup complete"
           volumeMounts:
           - name: welcome-content
             mountPath: /shared
@@ -786,7 +765,7 @@ spec:
         command: ["/bin/bash", "-c"]
         args:
           - |
-            echo "🚀 Starting Decision Service..."
+            echo "Starting Decision Service..."
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml
         ports:
         - containerPort: 8080
@@ -837,9 +816,7 @@ spec:
         emptyDir: {}
 
 ---
-# =========================
-# Teleport Service - KIE Server Showcase (Production Rules Execution API)
-# =========================
+# Teleport Service - KIE Server Showcase
 apiVersion: v1
 kind: Service
 metadata:
@@ -867,7 +844,6 @@ spec:
 ---
 # =========================
 # NGINX API Gateway
-# Reverse proxy with CORS for all Drools/Kogito services
 # =========================
 apiVersion: v1
 kind: ConfigMap
@@ -1062,7 +1038,6 @@ data:
             add_header Content-Type text/plain always;
             return 204;
           }
-          
           proxy_pass http://kogito_decision/kie-server/docs/;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
@@ -1081,7 +1056,6 @@ data:
             add_header Content-Type text/plain always;
             return 204;
           }
-          
           proxy_pass http://kogito_decision/kie-server/services/rest/server;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
@@ -1174,37 +1148,29 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              echo "🔄 Waiting for core Drools services to be ready..."
-              echo "⏳ Checking KIE Server availability..."
+              echo "Waiting for core Drools services to be ready..."
               while true; do
                 if kubectl get pods -n drools -l app=kie-server --field-selector=status.phase=Running 2>/dev/null | grep -q "3/3.*Running"; then
-                  echo "✅ KIE Server pods are running"
+                  echo "KIE Server ready"
                   break
                 fi
-                echo "  └─ KIE Server not ready yet, waiting 10s..."
                 sleep 10
               done
-              echo "⏳ Checking Decision Service availability..."
               while true; do
                 if kubectl get pods -n drools -l app=kogito-decision-service --field-selector=status.phase=Running 2>/dev/null | grep -q "2/2.*Running"; then
-                  echo "✅ Decision Service pods are running"
+                  echo "Decision Service ready"
                   break
                 fi
-                echo "  └─ Decision Service not ready yet, waiting 10s..."
                 sleep 10
               done
-              echo "⏳ Checking API Gateway availability..."
               while true; do
                 if kubectl get pods -n drools -l app=api-gateway --field-selector=status.phase=Running 2>/dev/null | grep -q "2/2.*Running"; then
-                  echo "✅ API Gateway pods are running"
+                  echo "API Gateway ready"
                   break
                 fi
-                echo "  └─ API Gateway not ready yet, waiting 10s..."
                 sleep 10
               done
-              echo "⏳ Waiting additional 30 seconds for services to fully initialize..."
               sleep 30
-              echo "🎉 All core services are ready! Starting Jobs Service..."
           resources:
             requests: { cpu: "50m", memory: "64Mi" }
             limits:   { cpu: "200m", memory: "256Mi" }
@@ -1270,7 +1236,7 @@ spec:
 
 ---
 # =========================
-# Kogito Data Index Service - Process and Decision Monitoring
+# Kogito Data Index Service
 # =========================
 apiVersion: apps/v1
 kind: Deployment

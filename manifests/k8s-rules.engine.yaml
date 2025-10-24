@@ -464,7 +464,7 @@ spec:
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0
         env:
         - name: JAVA_OPTS
-          value: "-Xms512m -Xmx2048m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=512m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8 -Dorg.kie.server.bypass.auth.user=false -Dorg.kie.workbench.profile=FULL -Dorg.uberfire.nio.git.daemon.host=0.0.0.0"
+          value: "-Xms512m -Xmx2048m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=512m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8 -Dorg.kie.server.bypass.auth.user=false -Dorg.kie.workbench.profile=FULL -Dorg.uberfire.nio.git.daemon.host=0.0.0.0 -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0"
         - name: KIE_CONNECTION_URL
           value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/drools?currentSchema=drools"
         - name: KIE_CONNECTION_DRIVER_CLASS
@@ -636,7 +636,8 @@ spec:
             export KIE_MAVEN_REPO_PWD="$ADMIN_PASS"
             
             echo "🚀 Starting KIE Server with Vault credentials..."
-            exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml
+            # Ensure KIE Server deploys at root for now
+            exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0
         env:
         - name: JAVA_OPTS
           value: "-Xms256m -Xmx1024m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=256m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"
@@ -654,8 +655,10 @@ spec:
           value: "true"
         - name: KIE_SERVER_BYPASS_AUTH_USER
           value: "false"
-        - name: KIE_SERVER_CONTEXT
-          value: "/kie-server"
+        - name: KIE_SERVER_HOST
+          value: "0.0.0.0"
+        - name: KIE_SERVER_PORT
+          value: "8080"
         - name: KIE_SERVER_JMS_QUEUE_REQUEST
           value: "queue/KIE.SERVER.REQUEST"
         - name: KIE_SERVER_JMS_QUEUE_RESPONSE
@@ -700,7 +703,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "kie-server-drools.app.suncoast.systems"
     teleport.dev/description: "KIE Server - Rules execution runtime and management API"
-    teleport.dev/uri: "/kie-server/"
+    teleport.dev/uri: "/kie-server/services/rest/server"
   labels:
     app.kubernetes.io/name: kie-server
     app.kubernetes.io/component: runtime
@@ -755,6 +758,10 @@ spec:
           value: "admin"
         - name: KIE_SERVER_CONTROLLER_PWD
           value: "admin"
+        - name: KIE_SERVER_HOST
+          value: "0.0.0.0"
+        - name: KIE_SERVER_PORT
+          value: "8080"
         readinessProbe:
           tcpSocket:
             port: 8080
@@ -791,7 +798,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "decisions-drools.app.suncoast.systems"
     teleport.dev/description: "KIE Server Showcase - Production rules execution and decision API"
-    teleport.dev/uri: "/kie-server/"
+    teleport.dev/uri: "/kie-server/services/rest/server"
   labels:
     app.kubernetes.io/name: kogito-decision-service
     app.kubernetes.io/component: rules-execution
@@ -895,7 +902,8 @@ data:
         # Root - API Gateway status page
         location = / {
           access_log off;
-          add_header Content-Type application/json always;
+          add_header Content-Type "application/json; charset=utf-8" always;
+          add_header Cache-Control "no-cache" always;
           return 200 '{"status":"healthy","services":{"business-central":"/business-central/","kie-server":"/kie-server/","health":"/health","api-docs":"/api/docs"},"individual_access":{"workbench":"https://workbench-drools.app.suncoast.systems/business-central/","kie-server":"https://kie-server-drools.app.suncoast.systems/","decisions":"https://decisions-drools.app.suncoast.systems/","jobs":"https://jobs-drools.app.suncoast.systems/","monitoring":"https://monitoring-drools.app.suncoast.systems/"}}';
         }
         
@@ -1493,7 +1501,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "jobs-drools.app.suncoast.systems"
     teleport.dev/description: "Kogito Jobs Service - Asynchronous job processing and scheduling"
-    teleport.dev/uri: "/q/dev/"
+    teleport.dev/uri: "/q/swagger-ui/"
   labels:
     app.kubernetes.io/name: kogito-jobs-service
     app.kubernetes.io/component: jobs

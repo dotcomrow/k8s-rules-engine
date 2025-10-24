@@ -488,10 +488,12 @@ spec:
             echo "� Disabling Wildfly welcome content handler..."
             
             echo "�🚀 Starting KIE Workbench with Vault credentials..."
-            # Completely disable welcome content handler by modifying standalone.xml before startup
+            # Setup redirect handler by modifying standalone.xml before startup
             if [ -f /opt/jboss/wildfly/standalone/configuration/standalone.xml ]; then
-              sed -i '/<location name="\/" handler="welcome-content"\/>/d' /opt/jboss/wildfly/standalone/configuration/standalone.xml
-              sed -i '/<file name="welcome-content" path="\${jboss.home.dir}\/welcome-content"\/>/d' /opt/jboss/wildfly/standalone/configuration/standalone.xml
+              # Replace welcome-content handler with redirect to business-central
+              sed -i 's/<location name="\/" handler="welcome-content"\/>/<location name="\/" handler="redirect-to-business-central"\/>/' /opt/jboss/wildfly/standalone/configuration/standalone.xml
+              # Add redirect handler definition
+              sed -i '/<file name="welcome-content"/i\                <redirect name="redirect-to-business-central" to="\/business-central\/"/>' /opt/jboss/wildfly/standalone/configuration/standalone.xml
             fi
             
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -Djboss.as.management.blocking.timeout=3600
@@ -702,10 +704,12 @@ spec:
             
             echo "🚀 Starting KIE Server with Vault credentials..."
             
-            # Completely disable welcome content handler by modifying standalone-full.xml before startup
+            # Setup redirect handler by modifying standalone-full.xml before startup
             if [ -f /opt/jboss/wildfly/standalone/configuration/standalone-full.xml ]; then
-              sed -i '/<location name="\/" handler="welcome-content"\/>/d' /opt/jboss/wildfly/standalone/configuration/standalone-full.xml
-              sed -i '/<file name="welcome-content" path="\${jboss.home.dir}\/welcome-content"\/>/d' /opt/jboss/wildfly/standalone/configuration/standalone-full.xml
+              # Replace welcome-content handler with redirect to kie-server
+              sed -i 's/<location name="\/" handler="welcome-content"\/>/<location name="\/" handler="redirect-to-kie-server"\/>/' /opt/jboss/wildfly/standalone/configuration/standalone-full.xml
+              # Add redirect handler definition
+              sed -i '/<file name="welcome-content"/i\                <redirect name="redirect-to-kie-server" to="\/kie-server\/services\/rest\/server"/>' /opt/jboss/wildfly/standalone/configuration/standalone-full.xml
             fi
             
             # Ensure KIE Server deploys at root for now
@@ -847,10 +851,12 @@ spec:
           - |
             echo "🚀 Starting Decision Service..."
             
-            # Completely disable welcome content handler by modifying standalone-full.xml before startup
+            # Setup redirect handler by modifying standalone-full.xml before startup
             if [ -f /opt/jboss/wildfly/standalone/configuration/standalone-full.xml ]; then
-              sed -i '/<location name="\/" handler="welcome-content"\/>/d' /opt/jboss/wildfly/standalone/configuration/standalone-full.xml
-              sed -i '/<file name="welcome-content" path="\${jboss.home.dir}\/welcome-content"\/>/d' /opt/jboss/wildfly/standalone/configuration/standalone-full.xml
+              # Replace welcome-content handler with redirect to kie-server
+              sed -i 's/<location name="\/" handler="welcome-content"\/>/<location name="\/" handler="redirect-to-kie-server"\/>/' /opt/jboss/wildfly/standalone/configuration/standalone-full.xml
+              # Add redirect handler definition
+              sed -i '/<file name="welcome-content"/i\                <redirect name="redirect-to-kie-server" to="\/kie-server\/services\/rest\/server"/>' /opt/jboss/wildfly/standalone/configuration/standalone-full.xml
             fi
             
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml

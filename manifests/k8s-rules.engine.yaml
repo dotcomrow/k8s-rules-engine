@@ -437,6 +437,30 @@ spec:
                 echo "  └─ still waiting... succeeded=${SUCC} failed=${FAIL} active=${ACTV}"
                 sleep 5
               done
+        - name: setup-redirect
+          image: jboss/drools-workbench:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "🔧 Setting up Business Central redirect..."
+              rm -rf /opt/jboss/wildfly/welcome-content/*
+              cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
+              <!DOCTYPE html>
+              <html>
+              <head>
+                  <meta http-equiv="refresh" content="0; url=/business-central/">
+                  <title>Redirecting to Business Central...</title>
+              </head>
+              <body>
+                  <p>Redirecting to <a href="/business-central/">Business Central</a>...</p>
+                  <script>window.location.href='/business-central/';</script>
+              </body>
+              </html>
+              EOF
+              echo "✅ Redirect setup complete"
+          volumeMounts:
+          - name: welcome-content
+            mountPath: /opt/jboss/wildfly/welcome-content
       containers:
       - name: kie-workbench
         image: jboss/drools-workbench:latest
@@ -460,25 +484,6 @@ spec:
             export KIE_CONNECTION_USER="$(cat /vault/secrets/db-username)"
             export KIE_CONNECTION_PASSWORD="$(cat /vault/secrets/db-password)"
             
-            # Override welcome content with redirect
-            echo "🔧 Replacing Wildfly welcome content with Business Central redirect..."
-            
-            # Replace the entire welcome-content directory with our redirect
-            rm -rf /opt/jboss/wildfly/welcome-content/*
-            cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta http-equiv="refresh" content="0; url=/business-central/">
-                <title>Redirecting to Business Central...</title>
-            </head>
-            <body>
-                <p>Redirecting to <a href="/business-central/">Business Central</a>...</p>
-                <script>window.location.href='/business-central/';</script>
-            </body>
-            </html>
-            EOF
-            
             echo "🚀 Starting KIE Workbench with Vault credentials..."
             exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0
         env:
@@ -501,6 +506,8 @@ spec:
         volumeMounts:
         - name: git-storage
           mountPath: /opt/jboss/.niogit
+        - name: welcome-content
+          mountPath: /opt/jboss/wildfly/welcome-content
         readinessProbe:
           httpGet:
             path: /business-central
@@ -527,6 +534,8 @@ spec:
       volumes:
       - name: git-storage
         emptyDir: {}
+      - name: welcome-content
+        emptyDir: {}
 
 ---
 # =========================
@@ -543,7 +552,6 @@ metadata:
     teleport.dev/public-addr: "workbench-drools.app.suncoast.systems"
     teleport.dev/description: "KIE Workbench - Business rules authoring and management interface"
     teleport.dev/port: "8080"
-    teleport.dev/uri: "/business-central/"
     app.kubernetes.io/name: kie-workbench
     app.kubernetes.io/component: authoring
     teleport.dev/app: "drools-workbench"
@@ -634,11 +642,38 @@ spec:
                 fi
                 sleep 5
               done
+        - name: setup-redirect
+          image: jboss/kie-server:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "🔧 Setting up KIE Server redirect..."
+              rm -rf /opt/jboss/wildfly/welcome-content/*
+              cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
+              <!DOCTYPE html>
+              <html>
+              <head>
+                  <meta http-equiv="refresh" content="0; url=/kie-server/services/rest/server">
+                  <title>Redirecting to KIE Server API...</title>
+              </head>
+              <body>
+                  <p>Redirecting to <a href="/kie-server/services/rest/server">KIE Server REST API</a>...</p>
+                  <script>window.location.href='/kie-server/services/rest/server';</script>
+              </body>
+              </html>
+              EOF
+              echo "✅ Redirect setup complete"
+          volumeMounts:
+          - name: welcome-content
+            mountPath: /opt/jboss/wildfly/welcome-content
       containers:
       - name: kie-server
         image: jboss/kie-server:latest
         ports:
         - containerPort: 8080
+        volumeMounts:
+        - name: welcome-content
+          mountPath: /opt/jboss/wildfly/welcome-content
         command: ["/bin/bash", "-c"]
         args:
           - |
@@ -655,25 +690,6 @@ spec:
             export KIE_SERVER_PWD="$KIE_SERVER_PASSWORD"
             export KIE_MAVEN_REPO_USER="$ADMIN_USER"
             export KIE_MAVEN_REPO_PWD="$ADMIN_PASS"
-            
-            # Override welcome content with redirect
-            echo "🔧 Replacing Wildfly welcome content with KIE Server redirect..."
-            
-            # Replace the entire welcome-content directory with our redirect
-            rm -rf /opt/jboss/wildfly/welcome-content/*
-            cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta http-equiv="refresh" content="0; url=/kie-server/services/rest/server">
-                <title>Redirecting to KIE Server API...</title>
-            </head>
-            <body>
-                <p>Redirecting to <a href="/kie-server/services/rest/server">KIE Server REST API</a>...</p>
-                <script>window.location.href='/kie-server/services/rest/server';</script>
-            </body>
-            </html>
-            EOF
             
             echo "🚀 Starting KIE Server with Vault credentials..."
             # Ensure KIE Server deploys at root for now
@@ -728,6 +744,9 @@ spec:
           limits:
             memory: "3Gi"
             cpu: "2000m"
+      volumes:
+      - name: welcome-content
+        emptyDir: {}
 
 ---
 # =========================
@@ -743,7 +762,6 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "kie-server-drools.app.suncoast.systems"
     teleport.dev/description: "KIE Server - Rules execution runtime and management API"
-    teleport.dev/uri: "/kie-server/services/rest/server"
   labels:
     app.kubernetes.io/name: kie-server
     app.kubernetes.io/component: runtime
@@ -864,7 +882,6 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "decisions-drools.app.suncoast.systems"
     teleport.dev/description: "KIE Server Showcase - Production rules execution and decision API"
-    teleport.dev/uri: "/kie-server/services/rest/server"
   labels:
     app.kubernetes.io/name: kogito-decision-service
     app.kubernetes.io/component: rules-execution
@@ -1538,7 +1555,6 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "api-drools.app.suncoast.systems"
     teleport.dev/description: "API Gateway - Main entry point for Drools platform providing routing and load balancing to backend services"
-    teleport.dev/uri: "/"
   labels:
     teleport.dev/enroll: "true"
     app.kubernetes.io/name: api-gateway
@@ -1568,7 +1584,6 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "jobs-drools.app.suncoast.systems"
     teleport.dev/description: "Kogito Jobs Service - Asynchronous job processing and scheduling"
-    teleport.dev/uri: "/q/swagger-ui/"
   labels:
     app.kubernetes.io/name: kogito-jobs-service
     app.kubernetes.io/component: jobs
@@ -1597,7 +1612,6 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "monitoring-drools.app.suncoast.systems"
     teleport.dev/description: "Kogito Data Index - Process and decision monitoring and analytics"
-    teleport.dev/uri: "/graphiql/"
   labels:
     app.kubernetes.io/name: kogito-data-index
     app.kubernetes.io/component: monitoring

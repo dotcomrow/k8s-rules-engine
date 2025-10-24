@@ -828,7 +828,7 @@ data:
       }
       
       upstream kie_server {
-        server kie-server.drools.svc.cluster.local:8080;
+        server kie-server.drools.svc.cluster.local:9990;
         keepalive 32;
       }
       

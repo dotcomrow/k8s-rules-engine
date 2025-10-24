@@ -674,8 +674,8 @@ spec:
 
 ---
 # =========================
-# Kogito Decision Service - Production Drools Decision Engine
-# Real Drools-based decision service with REST API
+# KIE Server Showcase - Production Business Rules Execution Server
+# Official JBoss KIE Server with REST API for rule execution and management
 # =========================
 apiVersion: apps/v1
 kind: Deployment
@@ -696,41 +696,49 @@ spec:
     spec:
       containers:
       - name: kogito-decision-service
-        image: truongnk96/drools:latest
+        image: jboss/kie-server-showcase:latest
         ports:
-        - containerPort: 9002
+        - containerPort: 8080
         env:
         - name: JAVA_OPTS
-          value: "-Xms256m -Xmx1024m -Djava.net.preferIPv4Stack=true"
-        - name: SERVER_PORT
-          value: "9002"
+          value: "-Xms512m -Xmx2048m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"
+        - name: KIE_SERVER_LOCATION
+          value: "http://kogito-decision-service.drools.svc.cluster.local:8080/kie-server/services/rest/server"
+        - name: KIE_SERVER_USER
+          value: "kieserver"
+        - name: KIE_SERVER_PWD
+          value: "kieserver1!"
+        - name: KIE_SERVER_CONTROLLER_USER
+          value: "admin"
+        - name: KIE_SERVER_CONTROLLER_PWD
+          value: "admin"
         readinessProbe:
           httpGet:
-            path: /
-            port: 9002
-          initialDelaySeconds: 30
-          periodSeconds: 10
-          timeoutSeconds: 5
+            path: /kie-server/services/rest/server
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 10
           failureThreshold: 5
         livenessProbe:
           httpGet:
-            path: /
-            port: 9002
-          initialDelaySeconds: 60
+            path: /kie-server/services/rest/server
+            port: 8080
+          initialDelaySeconds: 120
           periodSeconds: 30
-          timeoutSeconds: 5
+          timeoutSeconds: 10
           failureThreshold: 3
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "300m"
+            memory: "1Gi"
+            cpu: "500m"
           limits:
-            memory: "2Gi"
-            cpu: "1000m"
+            memory: "3Gi"
+            cpu: "2000m"
 
 ---
 # =========================
-# Teleport Service - Kogito Decision Service (Production Drools Decision API)
+# Teleport Service - KIE Server Showcase (Production Rules Execution API)
 # =========================
 apiVersion: v1
 kind: Service
@@ -738,21 +746,21 @@ metadata:
   name: kogito-decision-service
   namespace: drools
   annotations:
-    teleport.dev/name: "drools-kogito-decisions"
+    teleport.dev/name: "drools-kie-server-showcase"
     teleport.dev/protocol: "http"
-    teleport.dev/public_addr: "kogito.drools.yourdomain.com"
-    teleport.dev/labels: "environment=production,service=decision-api"
+    teleport.dev/public_addr: "kie-showcase.drools.yourdomain.com"
+    teleport.dev/labels: "environment=production,service=rules-execution"
   labels:
     app.kubernetes.io/name: kogito-decision-service
-    app.kubernetes.io/component: decision-api
-    teleport.dev/app: "drools-kogito-decisions"
+    app.kubernetes.io/component: rules-execution
+    teleport.dev/app: "drools-kie-server-showcase"
 spec:
   selector:
     app: kogito-decision-service
   ports:
   - name: http
     port: 8080
-    targetPort: 9002
+    targetPort: 8080
     protocol: TCP
   type: ClusterIP
 
@@ -886,9 +894,9 @@ data:
           add_header Access-Control-Expose-Headers "Content-Disposition" always;
         }
         
-        # KIE Server REST API - Rules execution endpoint
+        # KIE Server Showcase - Production rules execution API  
         location /kie-server/ {
-          proxy_pass http://kie_server/kie-server/;
+          proxy_pass http://kogito_decision/kie-server/;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
           proxy_set_header Host $host;
@@ -908,9 +916,9 @@ data:
           add_header Access-Control-Expose-Headers "X-KIE-ContentType" always;
         }
         
-        # Kogito Decision Service - Production Drools decision API
+        # Legacy decision service endpoint (redirect to KIE Server)
         location /decisions/ {
-          proxy_pass http://kogito_decision/;
+          proxy_pass http://kogito_decision/kie-server/;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
           proxy_set_header Host $host;
@@ -942,9 +950,9 @@ data:
           return 200 'ready';
         }
         
-        # API documentation and OpenAPI
+        # KIE Server REST API documentation
         location /api/docs {
-          proxy_pass http://kogito_decision/;
+          proxy_pass http://kogito_decision/kie-server/docs/;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
           proxy_set_header Host $host;
@@ -952,8 +960,9 @@ data:
           add_header Access-Control-Allow-Origin $cors_origin always;
         }
         
+        # KIE Server OpenAPI specification
         location /api/openapi {
-          proxy_pass http://kogito_decision/;
+          proxy_pass http://kogito_decision/kie-server/services/rest/server;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
           proxy_set_header Host $host;
@@ -1057,7 +1066,7 @@ spec:
     spec:
       containers:
       - name: kogito-jobs-service
-        image: quay.io/kiegroup/kogito-jobs-service-ephemeral:1.40
+        image: quay.io/kiegroup/kogito-jobs-service-inmemory:1.40
         ports:
         - containerPort: 8080
         env:

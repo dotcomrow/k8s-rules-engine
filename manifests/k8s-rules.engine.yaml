@@ -1,5 +1,5 @@
 # =========================
-# Drools/Kogito Rules Engine Platform (with optional OIDC via Keycloak)
+# Drools/Kogito Rules Engine Platform (Showcase images, WF23 redirects, optional OIDC)
 # =========================
 
 # =========================
@@ -79,12 +79,10 @@ spec:
               while :; do
                 if vault secrets list -format=json 2>/dev/null \
                   | jq -e '."secret/".type=="kv" and ."secret/".options.version=="2"' >/dev/null; then
-                  echo "✅ 'secret/' is KVv2"
-                  break
+                  echo "✅ 'secret/' is KVv2"; break
                 fi
                 if vault secrets list -format=json 2>/dev/null | jq -e 'has("secret/")' >/dev/null; then
-                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."
-                  exit 1
+                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."; exit 1
                 fi
                 vault secrets enable -path=secret -version=2 kv && break
                 sleep 2
@@ -314,7 +312,7 @@ metadata:
   namespace: drools
 
 # =========================
-# Optional OIDC config (Keycloak) – disabled by default
+# Optional OIDC (disabled by default) – shared for Workbench/KIE Server
 # =========================
 ---
 apiVersion: v1
@@ -337,8 +335,6 @@ data:
       enable-basic-auth=false
     )
     if (outcome != success) of /subsystem=elytron-oidc-client/secure-deployment=business-central.war/credential=secret:add(secret="${env.OIDC_CLIENT_SECRET:}")
-    /subsystem=elytron/role-decoder=oidc-roles:add(role-decoder=groups-to-roles)
-    /subsystem=undertow/application-security-domain=other:add(http-authentication-factory=application-http-authentication)
     run-batch
     stop-embedded-server
   configure-oidc.sh: |
@@ -353,7 +349,60 @@ data:
     echo "OIDC configuration applied."
 
 # =========================
-# KIE Workbench (Business Central) – Showcase image
+# Redirect CLIs (WF23 expression-filter) – Workbench & KIE Server
+# =========================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workbench-redirect-cli
+  namespace: drools
+data:
+  enable-redirect.cli: |
+    embed-server --std-out=echo
+    batch
+    /subsystem=undertow/configuration=filter/expression-filter=redirect-root:add(expression="path('/') -> redirect('/business-central/')")
+    /subsystem=undertow/server=default-server/host=default-host/filter-ref=redirect-root:add
+    run-batch
+    stop-embedded-server
+  run-cli.sh: |
+    #!/usr/bin/env sh
+    set -euo pipefail
+    echo "📄 Copying standalone configuration into /config..."
+    cp -a /opt/jboss/wildfly/standalone/configuration/* /config/
+    echo "🛠️  Applying redirect CLI (Workbench)..."
+    /opt/jboss/wildfly/bin/jboss-cli.sh --file=/redirect/enable-redirect.cli
+    echo "📦 Persisting modified standalone.xml into /config..."
+    cp -a /opt/jboss/wildfly/standalone/configuration/standalone.xml /config/standalone.xml
+    echo "✅ Redirect configured"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kieserver-redirect-cli
+  namespace: drools
+data:
+  enable-redirect.cli: |
+    embed-server --std-out=echo --server-config=standalone-full.xml
+    batch
+    /subsystem=undertow/configuration=filter/expression-filter=redirect-root:add(expression="path('/') -> redirect('/kie-server/services/rest/server')")
+    /subsystem=undertow/server=default-server/host=default-host/filter-ref=redirect-root:add
+    run-batch
+    stop-embedded-server
+  run-cli.sh: |
+    #!/usr/bin/env sh
+    set -euo pipefail
+    echo "📄 Copying standalone-full configuration into /config..."
+    cp -a /opt/jboss/wildfly/standalone/configuration/* /config/
+    echo "🛠️  Applying redirect CLI (KIE Server)..."
+    /opt/jboss/wildfly/bin/jboss-cli.sh --file=/redirect/enable-redirect.cli
+    echo "📦 Persisting modified standalone-full.xml into /config..."
+    cp -a /opt/jboss/wildfly/standalone/configuration/standalone-full.xml /config/standalone-full.xml
+    echo "✅ Redirect configured"
+
+# =========================
+# KIE Workbench (Business Central) – Showcase image + redirect
 # =========================
 ---
 apiVersion: apps/v1
@@ -372,20 +421,22 @@ spec:
     spec:
       serviceAccountName: drools-workbench
       volumes:
-        - name: welcome-content
-          emptyDir: {}
         - name: workbench-config
           emptyDir: {}
         - name: redirect-cli
           configMap:
             name: workbench-redirect-cli
             items:
-              - key: enable-redirect.cli
-                path: enable-redirect.cli
-                mode: 0444
-              - key: run-cli.sh
-                path: run-cli.sh
-                mode: 0555
+              - { key: enable-redirect.cli, path: enable-redirect.cli, mode: 0444 }
+              - { key: run-cli.sh,        path: run-cli.sh,        mode: 0555 }
+        - name: welcome-content
+          emptyDir: {}
+        - name: wildfly-oidc
+          configMap:
+            name: wildfly-oidc-config
+            items:
+              - { key: enable-oidc.cli,    path: enable-oidc.cli,    mode: 0444 }
+              - { key: configure-oidc.sh,  path: configure-oidc.sh,  mode: 0555 }
       initContainers:
         - name: wait-for-config-job
           image: alpine/k8s:1.31.4
@@ -395,9 +446,7 @@ spec:
               echo "Waiting for Job vault/drools-yugabyte-config to complete..."
               while true; do
                 if ! kubectl -n vault get job drools-yugabyte-config >/dev/null 2>&1; then
-                  echo "  └─ job not found yet..."
-                  sleep 5
-                  continue
+                  echo "  └─ job not found yet..."; sleep 5; continue
                 fi
                 SUCC="$(kubectl -n vault get job drools-yugabyte-config -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
                 [ "$SUCC" -ge 1 ] && break
@@ -406,30 +455,36 @@ spec:
         - name: configure-root-redirect
           image: quay.io/kiegroup/business-central-workbench-showcase:latest
           command: ["/bin/sh","-c"]
-          args:
-            - |
-              /redirect/run-cli.sh
+          args: ["/redirect/run-cli.sh"]
           volumeMounts:
-            - name: workbench-config
-              mountPath: /config
-            - name: redirect-cli
-              mountPath: /redirect
+            - { name: workbench-config, mountPath: /config }
+            - { name: redirect-cli,     mountPath: /redirect }
+        - name: configure-oidc
+          image: quay.io/kiegroup/business-central-workbench-showcase:latest
+          command: ["/bin/sh","-c"]
+          args: ["sh /oidc/configure-oidc.sh"]
+          env:
+            - { name: OIDC_ENABLE,          value: "false" }
+            - { name: OIDC_REALM,           value: "" }
+            - { name: OIDC_ISSUER_URL,      value: "" }
+            - { name: OIDC_CLIENT_ID,       value: "" }
+            - { name: OIDC_CLIENT_SECRET,   value: "" }
+            - { name: OIDC_REDIRECT_URL,    value: "" }
+            - { name: OIDC_POST_LOGOUT_URL, value: "" }
+          volumeMounts:
+            - { name: wildfly-oidc, mountPath: /oidc }
         - name: setup-redirect-fallback
           image: quay.io/kiegroup/business-central-workbench-showcase:latest
           command: ["/bin/sh", "-c"]
           args:
             - |
-              # Keep the static HTML as a fallback (not strictly needed once the handler is changed)
               rm -rf /opt/jboss/wildfly/welcome-content/*
               cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
-              <!DOCTYPE html>
-              <meta http-equiv="refresh" content="0; url=/business-central/">
-              <title>Redirecting…</title>
-              <a href="/business-central/">Continue to Business Central</a>
+              <!DOCTYPE html><meta http-equiv="refresh" content="0; url=/business-central/">
+              <title>Redirecting…</title><a href="/business-central/">Continue</a>
               EOF
           volumeMounts:
-            - name: welcome-content
-              mountPath: /opt/jboss/wildfly/welcome-content
+            - { name: welcome-content, mountPath: /opt/jboss/wildfly/welcome-content }
       containers:
         - name: kie-workbench
           image: quay.io/kiegroup/business-central-workbench-showcase:latest
@@ -445,11 +500,8 @@ spec:
             - name: KIE_CONNECTION_DRIVER_CLASS
               value: "org.postgresql.Driver"
           volumeMounts:
-            # Use the modified configuration produced by the initContainer
-            - name: workbench-config
-              mountPath: /opt/jboss/wildfly/standalone/configuration
-            - name: welcome-content
-              mountPath: /opt/jboss/wildfly/welcome-content
+            - { name: workbench-config,  mountPath: /opt/jboss/wildfly/standalone/configuration }
+            - { name: welcome-content,   mountPath: /opt/jboss/wildfly/welcome-content }
           readinessProbe:
             httpGet: { path: /business-central/, port: 8080 }
             initialDelaySeconds: 60
@@ -492,7 +544,7 @@ spec:
   type: ClusterIP
 
 # =========================
-# KIE Server – Showcase image
+# KIE Server – Showcase image + redirect
 # =========================
 ---
 apiVersion: apps/v1
@@ -510,6 +562,23 @@ spec:
       labels: { app: kie-server }
     spec:
       serviceAccountName: drools-kie-server
+      volumes:
+        - name: kieserver-config
+          emptyDir: {}
+        - name: redirect-cli
+          configMap:
+            name: kieserver-redirect-cli
+            items:
+              - { key: enable-redirect.cli, path: enable-redirect.cli, mode: 0444 }
+              - { key: run-cli.sh,        path: run-cli.sh,        mode: 0555 }
+        - name: welcome-content
+          emptyDir: {}
+        - name: wildfly-oidc
+          configMap:
+            name: wildfly-oidc-config
+            items:
+              - { key: enable-oidc.cli,    path: enable-oidc.cli,    mode: 0444 }
+              - { key: configure-oidc.sh,  path: configure-oidc.sh,  mode: 0555 }
       initContainers:
         - name: wait-for-config-job
           image: alpine/k8s:1.31.4
@@ -519,81 +588,59 @@ spec:
               echo "Waiting for Job vault/drools-yugabyte-config to complete..."
               while true; do
                 if ! kubectl -n vault get job drools-yugabyte-config >/dev/null 2>&1; then
-                  echo "  └─ job not found yet..."
-                  sleep 5
-                  continue
+                  echo "  └─ job not found yet..."; sleep 5; continue
                 fi
                 SUCC="$(kubectl -n vault get job drools-yugabyte-config -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
                 [ "$SUCC" -ge 1 ] && break
                 sleep 5
               done
-        - name: setup-redirect
+        - name: configure-root-redirect
+          image: quay.io/kiegroup/kie-server-showcase:latest
+          command: ["/bin/sh","-c"]
+          args: ["/redirect/run-cli.sh"]
+          volumeMounts:
+            - { name: kieserver-config, mountPath: /config }
+            - { name: redirect-cli,     mountPath: /redirect }
+        - name: configure-oidc
+          image: quay.io/kiegroup/kie-server-showcase:latest
+          command: ["/bin/sh","-c"]
+          args: ["sh /oidc/configure-oidc.sh"]
+          env:
+            - { name: OIDC_ENABLE,          value: "false" }
+            - { name: OIDC_REALM,           value: "" }
+            - { name: OIDC_ISSUER_URL,      value: "" }
+            - { name: OIDC_CLIENT_ID,       value: "" }
+            - { name: OIDC_CLIENT_SECRET,   value: "" }
+            - { name: OIDC_REDIRECT_URL,    value: "" }
+            - { name: OIDC_POST_LOGOUT_URL, value: "" }
+          volumeMounts:
+            - { name: wildfly-oidc, mountPath: /oidc }
+        - name: setup-redirect-fallback
           image: quay.io/kiegroup/kie-server-showcase:latest
           command: ["/bin/sh", "-c"]
           args:
             - |
-              echo "🔧 Setting up KIE Server redirect..."
               rm -rf /opt/jboss/wildfly/welcome-content/*
               cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
-              <!DOCTYPE html>
-              <html>
-              <head>
-                <meta http-equiv="refresh" content="0; url=/kie-server/services/rest/server">
-                <title>Redirecting to KIE Server API...</title>
-              </head>
-              <body>
-                <p>Redirecting to <a href="/kie-server/services/rest/server">KIE Server REST API</a>...</p>
-                <script>window.location.href='/kie-server/services/rest/server';</script>
-              </body>
-              </html>
+              <!DOCTYPE html><meta http-equiv="refresh" content="0; url=/kie-server/services/rest/server">
+              <title>Redirecting…</title><a href="/kie-server/services/rest/server">Continue</a>
               EOF
-              echo "✅ Redirect setup complete"
           volumeMounts:
-            - name: welcome-content
-              mountPath: /opt/jboss/wildfly/welcome-content
-        - name: configure-oidc
-          image: quay.io/kiegroup/kie-server-showcase:latest
-          command: ["/bin/sh","-c"]
-          args:
-            - |
-              sh /oidc/configure-oidc.sh
-          env:
-            - name: OIDC_ENABLE
-              value: "false"   # set to "true" for Keycloak OIDC
-            - name: OIDC_REALM
-              value: ""
-            - name: OIDC_ISSUER_URL
-              value: ""
-            - name: OIDC_CLIENT_ID
-              value: ""        # e.g., "kie-server"
-            - name: OIDC_CLIENT_SECRET
-              value: ""        # if confidential client
-            - name: OIDC_REDIRECT_URL
-              value: ""        # e.g., external URL base for callbacks (not strictly needed for bearer-only)
-            - name: OIDC_POST_LOGOUT_URL
-              value: ""
-          volumeMounts:
-            - name: wildfly-oidc
-              mountPath: /oidc
+            - { name: welcome-content, mountPath: /opt/jboss/wildfly/welcome-content }
       containers:
         - name: kie-server
           image: quay.io/kiegroup/kie-server-showcase:latest
           ports:
             - { containerPort: 8080 }
           env:
-            - name: JAVA_OPTS
-              value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0"
-            - name: KIE_SERVER_ID
-              value: "kie-server"
-            - name: KIE_SERVER_LOCATION
-              value: "https://kie-server-drools.app.suncoast.systems/services/rest/server"
-            - name: KIE_SERVER_CONTROLLER
-              value: "https://workbench-drools.app.suncoast.systems/business-central/rest/controller"
-            - name: KIE_MAVEN_REPO
-              value: "https://workbench-drools.app.suncoast.systems/business-central/maven2"
+            - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0" }
+            - { name: KIE_SERVER_ID,       value: "kie-server" }
+            - { name: KIE_SERVER_LOCATION, value: "https://kie-server-drools.app.suncoast.systems/services/rest/server" }
+            - { name: KIE_SERVER_CONTROLLER, value: "https://workbench-drools.app.suncoast.systems/business-central/rest/controller" }
+            - { name: KIE_MAVEN_REPO,     value: "https://workbench-drools.app.suncoast.systems/business-central/maven2" }
           volumeMounts:
-            - name: welcome-content
-              mountPath: /opt/jboss/wildfly/welcome-content
+            - { name: kieserver-config,  mountPath: /opt/jboss/wildfly/standalone/configuration }
+            - { name: welcome-content,   mountPath: /opt/jboss/wildfly/welcome-content }
           readinessProbe:
             tcpSocket: { port: 8080 }
             initialDelaySeconds: 120
@@ -609,44 +656,6 @@ spec:
           resources:
             requests: { cpu: "500m", memory: "1Gi" }
             limits:   { cpu: "2000m", memory: "3Gi" }
-      volumes:
-        - name: welcome-content
-          emptyDir: {}
-        - name: wildfly-oidc
-          configMap:
-            name: wildfly-oidc-config
-            items:
-              - key: enable-oidc.cli
-                path: enable-oidc.cli
-                mode: 0444
-              - key: configure-oidc.sh
-                path: configure-oidc.sh
-                mode: 0555
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: workbench-redirect-cli
-  namespace: drools
-data:
-  enable-redirect.cli: |
-    embed-server --server-config=standalone.xml --std-out=echo
-    batch
-    # Create an Undertow redirect handler that points to /business-central/
-    /subsystem=undertow/configuration=handler/redirect=redirect-to-business-central:add(location="/business-central/")
-    # Point root ("/") to the redirect handler
-    /subsystem=undertow/server=default-server/host=default-host/location=\/:write-attribute(name=handler, value=redirect-to-business-central)
-    run-batch
-    stop-embedded-server
-  run-cli.sh: |
-    #!/usr/bin/env sh
-    set -euo pipefail
-    echo "📄 Copying standalone configuration into /config..."
-    cp -a /opt/jboss/wildfly/standalone/configuration/* /config/
-    ls -l /config/ >/dev/null
-    echo "🛠️  Applying redirect CLI to /config/standalone.xml ..."
-    /opt/jboss/wildfly/bin/jboss-cli.sh --file=/redirect/enable-redirect.cli
-    echo "✅ Redirect configured"
 
 ---
 apiVersion: v1
@@ -671,7 +680,7 @@ spec:
   type: ClusterIP
 
 # =========================
-# KIE Server Showcase (Decision service façade)
+# KIE Server Showcase (Decision façade)
 # =========================
 ---
 apiVersion: apps/v1
@@ -700,17 +709,8 @@ spec:
               echo "🔧 Setting up Decision Service redirect..."
               mkdir -p /shared/welcome-content
               cat > /shared/welcome-content/index.html << 'EOF'
-              <!DOCTYPE html>
-              <html>
-              <head>
-                  <meta http-equiv="refresh" content="0; url=/kie-server/services/rest/server">
-                  <title>Redirecting to KIE Server API...</title>
-              </head>
-              <body>
-                  <p>Redirecting to <a href="/kie-server/services/rest/server">KIE Server REST API</a>...</p>
-                  <script>window.location.href='/kie-server/services/rest/server';</script>
-              </body>
-              </html>
+              <!DOCTYPE html><meta http-equiv="refresh" content="0; url=/kie-server/services/rest/server">
+              <title>Redirecting…</title><a href="/kie-server/services/rest/server">Continue</a>
               EOF
               echo "✅ Redirect setup complete"
           volumeMounts:
@@ -721,9 +721,7 @@ spec:
           image: quay.io/kiegroup/kie-server-showcase:latest
           command: ["/bin/bash", "-c"]
           args:
-            - |
-              echo "🚀 Starting Decision Service..."
-              exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml
+            - exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml
           ports:
             - containerPort: 8080
           volumeMounts:
@@ -731,22 +729,14 @@ spec:
               mountPath: /opt/jboss/wildfly/welcome-content
               subPath: welcome-content
           env:
-            - name: JAVA_OPTS
-              value: "-Xms512m -Xmx2048m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"
-            - name: KIE_SERVER_LOCATION
-              value: "https://decisions-drools.app.suncoast.systems/kie-server/services/rest/server"
-            - name: KIE_SERVER_USER
-              value: "kieserver"
-            - name: KIE_SERVER_PWD
-              value: "kieserver1!"
-            - name: KIE_SERVER_CONTROLLER_USER
-              value: "admin"
-            - name: KIE_SERVER_CONTROLLER_PWD
-              value: "admin"
-            - name: KIE_SERVER_HOST
-              value: "0.0.0.0"
-            - name: KIE_SERVER_PORT
-              value: "8080"
+            - { name: JAVA_OPTS, value: "-Xms512m -Xmx2048m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8" }
+            - { name: KIE_SERVER_LOCATION, value: "https://decisions-drools.app.suncoast.systems/kie-server/services/rest/server" }
+            - { name: KIE_SERVER_USER, value: "kieserver" }
+            - { name: KIE_SERVER_PWD,  value: "kieserver1!" }
+            - { name: KIE_SERVER_CONTROLLER_USER, value: "admin" }
+            - { name: KIE_SERVER_CONTROLLER_PWD,  value: "admin" }
+            - { name: KIE_SERVER_HOST, value: "0.0.0.0" }
+            - { name: KIE_SERVER_PORT, value: "8080" }
           readinessProbe:
             tcpSocket: { port: 8080 }
             initialDelaySeconds: 120
@@ -949,9 +939,7 @@ spec:
           image: nginx:1.25-alpine
           ports: [{ containerPort: 8080 }]
           volumeMounts:
-            - name: nginx-config
-              mountPath: /etc/nginx/nginx.conf
-              subPath: nginx.conf
+            - { name: nginx-config, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf }
           readinessProbe:
             httpGet: { path: /ready, port: 8080 }
             initialDelaySeconds: 5
@@ -970,6 +958,29 @@ spec:
       volumes:
         - name: nginx-config
           configMap: { name: api-gateway-nginx-conf }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: drools-api-gateway
+  namespace: drools
+  annotations:
+    teleport.dev/name: "drools-api-gateway"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "api-drools.app.suncoast.systems"
+    teleport.dev/description: "API Gateway - Main entry point for Drools platform"
+  labels:
+    teleport.dev/enroll: "true"
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/component: gateway
+    teleport.dev/app: "drools-api-gateway"
+spec:
+  selector:
+    app: api-gateway
+  ports:
+    - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
+  type: ClusterIP
 
 # =========================
 # Kogito Jobs Service (ephemeral)
@@ -1032,17 +1043,27 @@ spec:
           resources:
             requests: { memory: "128Mi", cpu: "100m" }
             limits:   { memory: "512Mi", cpu: "500m" }
+
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: kogito-jobs-service
   namespace: drools
+  annotations:
+    teleport.dev/name: "drools-jobs-service"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "jobs-drools.app.suncoast.systems"
+    teleport.dev/description: "Kogito Jobs Service - Asynchronous job processing and scheduling"
+  labels:
+    app.kubernetes.io/name: kogito-jobs-service
+    app.kubernetes.io/component: jobs
+    teleport.dev/enroll: "true"
 spec:
   selector:
     app: kogito-jobs-service
   ports:
-    - { port: 8080, targetPort: 8080 }
+    - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
   type: ClusterIP
 
 # =========================
@@ -1082,17 +1103,27 @@ spec:
           resources:
             requests: { memory: "256Mi", cpu: "200m" }
             limits:   { memory: "1Gi",   cpu: "800m" }
+
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: kogito-data-index
   namespace: drools
+  annotations:
+    teleport.dev/name: "drools-data-index"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "monitoring-drools.app.suncoast.systems"
+    teleport.dev/description: "Kogito Data Index - Monitoring and analytics"
+  labels:
+    app.kubernetes.io/name: kogito-data-index
+    app.kubernetes.io/component: monitoring
+    teleport.dev/enroll: "true"
 spec:
   selector:
     app: kogito-data-index
   ports:
-    - { port: 8080, targetPort: 8080 }
+    - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
   type: ClusterIP
 
 # =========================
@@ -1164,8 +1195,7 @@ spec:
             - { name: JAVA_OPTS, value: "-Xms128m -Xmx512m" }
             - { name: KIE_SERVER_URL, value: "https://api-drools.app.suncoast.systems/kie-server/services/rest/server" }
           volumeMounts:
-            - name: config
-              mountPath: /app/config
+            - { name: config, mountPath: /app/config }
           readinessProbe:
             exec: { command: ["sh","-c","echo ready"] }
             initialDelaySeconds: 10
@@ -1180,86 +1210,7 @@ spec:
       volumes:
         - name: config
           configMap: { name: drools-service-config }
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: drools-rules-service
-  namespace: drools
-spec:
-  selector:
-    app: drools-rules-service
-  ports:
-    - { port: 8080, targetPort: 8080 }
-  type: ClusterIP
 
-# =========================
-# Teleport Services
-# =========================
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: drools-api-gateway
-  namespace: drools
-  annotations:
-    teleport.dev/name: "drools-api-gateway"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "api-drools.app.suncoast.systems"
-    teleport.dev/description: "API Gateway - Main entry point for Drools platform"
-  labels:
-    teleport.dev/enroll: "true"
-    app.kubernetes.io/name: api-gateway
-    app.kubernetes.io/component: gateway
-    teleport.dev/app: "drools-api-gateway"
-spec:
-  selector:
-    app: api-gateway
-  ports:
-    - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
-  type: ClusterIP
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: kogito-jobs-service
-  namespace: drools
-  annotations:
-    teleport.dev/name: "drools-jobs-service"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "jobs-drools.app.suncoast.systems"
-    teleport.dev/description: "Kogito Jobs Service - Asynchronous job processing and scheduling"
-  labels:
-    app.kubernetes.io/name: kogito-jobs-service
-    app.kubernetes.io/component: jobs
-    teleport.dev/enroll: "true"
-spec:
-  selector:
-    app: kogito-jobs-service
-  ports:
-    - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
-  type: ClusterIP
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: kogito-data-index
-  namespace: drools
-  annotations:
-    teleport.dev/name: "drools-data-index"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "monitoring-drools.app.suncoast.systems"
-    teleport.dev/description: "Kogito Data Index - Monitoring and analytics"
-  labels:
-    app.kubernetes.io/name: kogito-data-index
-    app.kubernetes.io/component: monitoring
-    teleport.dev/enroll: "true"
-spec:
-  selector:
-    app: kogito-data-index
-  ports:
-    - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
-  type: ClusterIP
 ---
 apiVersion: v1
 kind: Service

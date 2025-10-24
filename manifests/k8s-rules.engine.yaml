@@ -629,21 +629,19 @@ spec:
         - name: MESSAGING_SERIALIZERS
           value: "org.apache.activemq.artemis.jms.client.ActiveMQObjectMessage,org.apache.activemq.artemis.jms.client.ActiveMQMessage,org.apache.activemq.artemis.jms.client.ActiveMQTextMessage"
         readinessProbe:
-          httpGet:
-            path: /kie-server/services/rest/server
-            port: 8080
-          initialDelaySeconds: 90
-          periodSeconds: 15
-          timeoutSeconds: 10
-          failureThreshold: 5
-        livenessProbe:
-          httpGet:
-            path: /kie-server/services/rest/server
+          tcpSocket:
             port: 8080
           initialDelaySeconds: 120
-          periodSeconds: 30
-          timeoutSeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
           failureThreshold: 3
+        livenessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 180
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 5
         resources:
           requests:
             memory: "1Gi"
@@ -676,7 +674,7 @@ spec:
   ports:
   - name: http
     port: 8080
-    targetPort: 80999080
+    targetPort: 8080
     protocol: TCP
   type: ClusterIP
 
@@ -721,21 +719,19 @@ spec:
         - name: KIE_SERVER_CONTROLLER_PWD
           value: "admin"
         readinessProbe:
-          httpGet:
-            path: /kie-server/services/rest/server
-            port: 8080
-          initialDelaySeconds: 60
-          periodSeconds: 15
-          timeoutSeconds: 10
-          failureThreshold: 5
-        livenessProbe:
-          httpGet:
-            path: /kie-server/services/rest/server
+          tcpSocket:
             port: 8080
           initialDelaySeconds: 120
-          periodSeconds: 30
-          timeoutSeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
           failureThreshold: 3
+        livenessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 180
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 5
         resources:
           requests:
             memory: "1Gi"
@@ -1074,7 +1070,7 @@ spec:
     spec:
       containers:
       - name: kogito-jobs-service
-        image: quay.io/kiegroup/kogito-jobs-service-inmemory:1.44.0
+        image: quay.io/kiegroup/kogito-jobs-service-ephemeral:1.40
         ports:
         - containerPort: 8080
         env:

@@ -355,6 +355,40 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: workbench-nginx-config
+  namespace: drools
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+    http {
+        upstream backend {
+            server localhost:8080;
+        }
+        server {
+            listen 9080;
+            server_name _;
+            
+            # Root path redirects to business-central
+            location = / {
+                return 302 /business-central/;
+            }
+            
+            # Proxy all other requests to the backend
+            location / {
+                proxy_pass http://backend;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+        }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: workbench-redirect-cli
   namespace: drools
 data:
@@ -363,6 +397,8 @@ data:
     batch
     /subsystem=undertow/configuration=filter/expression-filter=redirect-root:add(expression="path('/') -> redirect('/business-central/')")
     /subsystem=undertow/server=default-server/host=default-host/filter-ref=redirect-root:add
+    /subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=proxy-address-forwarding,value=true)
+    /subsystem=undertow/server=default-server/host=default-host:write-attribute(name=default-response-code,value=404)
     run-batch
     stop-embedded-server
   run-cli.sh: |
@@ -374,7 +410,42 @@ data:
     /opt/jboss/wildfly/bin/jboss-cli.sh --file=/redirect/enable-redirect.cli
     echo "📦 Persisting modified standalone.xml into /config..."
     cp -a /opt/jboss/wildfly/standalone/configuration/standalone.xml /config/standalone.xml
-    echo "✅ Redirect configured"
+    echo "🎯 Creating ROOT.war deployment to serve business-central directly..."
+    echo "📁 Creating ROOT.war directory..."
+    mkdir -p /opt/jboss/wildfly/standalone/deployments/ROOT.war/WEB-INF || { echo "❌ Failed to create ROOT.war directory"; exit 1; }
+    echo "✅ ROOT.war directory created"
+    cat > /opt/jboss/wildfly/standalone/deployments/ROOT.war/WEB-INF/web.xml << 'EOF'
+    <?xml version="1.0" encoding="UTF-8"?>
+    <web-app xmlns="http://xmlns.jcp.org/xml/ns/javaee"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/javaee 
+             http://xmlns.jcp.org/xml/ns/javaee/web-app_3_1.xsd"
+             version="3.1">
+      <display-name>Root Redirect</display-name>
+      <welcome-file-list>
+        <welcome-file>index.html</welcome-file>
+      </welcome-file-list>
+    </web-app>
+    EOF
+    cat > /opt/jboss/wildfly/standalone/deployments/ROOT.war/index.html << 'EOF'
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Business Central</title>
+        <meta http-equiv="refresh" content="0; url=/business-central/">
+        <script>
+            // Immediate JavaScript redirect as backup
+            window.location.href = "/business-central/";
+        </script>
+    </head>
+    <body>
+        <p>Redirecting to <a href="/business-central/">Business Central</a>...</p>
+    </body>
+    </html>
+    EOF
+    echo "🚀 Marking ROOT.war for deployment..."
+    touch /opt/jboss/wildfly/standalone/deployments/ROOT.war.dodeploy || { echo "❌ Failed to create deploy marker"; exit 1; }
+    echo "✅ ROOT.war deployment configured successfully"
 
 ---
 apiVersion: v1
@@ -437,6 +508,7 @@ spec:
             items:
               - { key: enable-oidc.cli,    path: enable-oidc.cli,    mode: 0444 }
               - { key: configure-oidc.sh,  path: configure-oidc.sh,  mode: 0555 }
+
       initContainers:
         - name: wait-for-config-job
           image: alpine/k8s:1.31.4
@@ -494,11 +566,18 @@ spec:
             - { name: git,   containerPort: 9418 }
           env:
             - name: JAVA_OPTS
-              value: "-Xms512m -Xmx2048m -Dorg.kie.workbench.profile=FULL -Dorg.uberfire.nio.git.daemon.host=0.0.0.0 -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0"
+              value: >-
+                -Xms512m -Xmx2048m -Dorg.kie.workbench.profile=FULL
+                -Dorg.uberfire.nio.git.daemon.host=0.0.0.0
+                -Djboss.bind.address=0.0.0.0
+                -Djboss.bind.address.management=0.0.0.0
+                -Dorg.kie.server.location=https://workbench-drools.app.suncoast.systems/business-central/
             - name: KIE_CONNECTION_URL
               value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/drools?currentSchema=drools"
             - name: KIE_CONNECTION_DRIVER_CLASS
               value: "org.postgresql.Driver"
+            - name: PROXY_ADDRESS_FORWARDING
+              value: "true"
           volumeMounts:
             - { name: workbench-config,  mountPath: /opt/jboss/wildfly/standalone/configuration }
             - { name: welcome-content,   mountPath: /opt/jboss/wildfly/welcome-content }

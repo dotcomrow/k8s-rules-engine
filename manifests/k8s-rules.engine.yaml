@@ -1347,7 +1347,7 @@ metadata:
   annotations:
     teleport.dev/name: "drools-rules-service"
     teleport.dev/protocol: "http"
-  teleport.dev/public-addr: "rules-drools.teleport.app.suncoast.systems"
+    teleport.dev/public-addr: "rules-drools.teleport.app.suncoast.systems"
     teleport.dev/description: "Drools Rules Service - Embeddable library service"
   labels:
     app.kubernetes.io/name: drools-rules-service

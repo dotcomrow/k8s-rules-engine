@@ -618,7 +618,7 @@ spec:
                 -Dorg.uberfire.nio.git.daemon.host=0.0.0.0
                 -Djboss.bind.address=0.0.0.0
                 -Djboss.bind.address.management=0.0.0.0
-                -Dorg.kie.server.location=https://workbench-drools.app.suncoast.systems/business-central/
+                -Dorg.kie.server.location=https://workbench-drools.teleport.app.suncoast.systems/business-central/
             - name: KIE_CONNECTION_URL
               value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/drools?currentSchema=drools"
             - name: KIE_CONNECTION_DRIVER_CLASS
@@ -654,7 +654,7 @@ metadata:
   annotations:
     teleport.dev/name: "drools-workbench"
     teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "workbench-drools.app.suncoast.systems"
+    teleport.dev/public-addr: "workbench-drools.teleport.app.suncoast.systems"
     teleport.dev/description: "KIE Workbench - Business rules authoring and management interface"
     teleport.dev/port: "8080"
   labels:
@@ -762,9 +762,9 @@ spec:
           env:
             - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0" }
             - { name: KIE_SERVER_ID,       value: "kie-server" }
-            - { name: KIE_SERVER_LOCATION, value: "https://kie-server-drools.app.suncoast.systems/services/rest/server" }
-            - { name: KIE_SERVER_CONTROLLER, value: "https://workbench-drools.app.suncoast.systems/business-central/rest/controller" }
-            - { name: KIE_MAVEN_REPO,     value: "https://workbench-drools.app.suncoast.systems/business-central/maven2" }
+            - { name: KIE_SERVER_LOCATION, value: "https://kie-server-drools.teleport.app.suncoast.systems/services/rest/server" }
+            - { name: KIE_SERVER_CONTROLLER, value: "https://workbench-drools.teleport.app.suncoast.systems/business-central/rest/controller" }
+            - { name: KIE_MAVEN_REPO,     value: "https://workbench-drools.teleport.app.suncoast.systems/business-central/maven2" }
           volumeMounts:
             - { name: kieserver-config,  mountPath: /opt/jboss/wildfly/standalone/configuration }
             - { name: welcome-content,   mountPath: /opt/jboss/wildfly/welcome-content }
@@ -793,7 +793,7 @@ metadata:
   annotations:
     teleport.dev/name: "drools-kie-server"
     teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "kie-server-drools.app.suncoast.systems"
+    teleport.dev/public-addr: "kie-server-drools.teleport.app.suncoast.systems"
     teleport.dev/description: "KIE Server - Rules execution runtime and management API"
   labels:
     app.kubernetes.io/name: kie-server
@@ -857,7 +857,7 @@ spec:
               subPath: welcome-content
           env:
             - { name: JAVA_OPTS, value: "-Xms512m -Xmx2048m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8" }
-            - { name: KIE_SERVER_LOCATION, value: "https://decisions-drools.app.suncoast.systems/kie-server/services/rest/server" }
+            - { name: KIE_SERVER_LOCATION, value: "https://decisions-drools.teleport.app.suncoast.systems/kie-server/services/rest/server" }
             - { name: KIE_SERVER_USER, value: "kieserver" }
             - { name: KIE_SERVER_PWD,  value: "kieserver1!" }
             - { name: KIE_SERVER_CONTROLLER_USER, value: "admin" }
@@ -892,7 +892,7 @@ metadata:
   annotations:
     teleport.dev/name: "drools-decision-service"
     teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "decisions-drools.app.suncoast.systems"
+    teleport.dev/public-addr: "decisions-drools.teleport.app.suncoast.systems"
     teleport.dev/description: "KIE Server Showcase - Production rules execution and decision API"
   labels:
     app.kubernetes.io/name: kogito-decision-service
@@ -952,7 +952,7 @@ data:
           access_log off;
           add_header Content-Type "application/json; charset=utf-8" always;
           add_header Cache-Control "no-cache" always;
-          return 200 '{"status":"healthy","services":{"business-central":"/business-central/","kie-server":"/kie-server/","health":"/health","api-docs":"/api/docs"},"individual_access":{"workbench":"https://workbench-drools.app.suncoast.systems/business-central/","kie-server":"https://kie-server-drools.app.suncoast.systems/","decisions":"https://decisions-drools.app.suncoast.systems/","jobs":"https://jobs-drools.app.suncoast.systems/","monitoring":"https://monitoring-drools.app.suncoast.systems/"}}';
+          return 200 '{"status":"healthy","services":{"business-central":"/business-central/","kie-server":"/kie-server/","health":"/health","api-docs":"/api/docs"},"individual_access":{"workbench":"https://workbench-drools.teleport.app.suncoast.systems/business-central/","kie-server":"https://kie-server-drools.teleport.app.suncoast.systems/","decisions":"https://decisions-drools.teleport.app.suncoast.systems/","jobs":"https://jobs-drools.teleport.app.suncoast.systems/","monitoring":"https://monitoring-drools.teleport.app.suncoast.systems/"}}';
         }
 
         location /business-central/ {
@@ -1095,7 +1095,7 @@ metadata:
   annotations:
     teleport.dev/name: "drools-api-gateway"
     teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "api-drools.app.suncoast.systems"
+    teleport.dev/public-addr: "api-drools.teleport.app.suncoast.systems"
     teleport.dev/description: "API Gateway - Main entry point for Drools platform"
   labels:
     teleport.dev/enroll: "true"
@@ -1149,7 +1149,7 @@ spec:
           env:
             - { name: QUARKUS_HTTP_PORT, value: "8080" }
             - { name: QUARKUS_HTTP_HOST, value: "0.0.0.0" }
-            - { name: KOGITO_JOBS_SERVICE_URL, value: "https://jobs-drools.app.suncoast.systems" }
+            - { name: KOGITO_JOBS_SERVICE_URL, value: "https://jobs-drools.teleport.app.suncoast.systems" }
             - { name: QUARKUS_LOG_LEVEL, value: "INFO" }
             - { name: QUARKUS_LOG_CONSOLE_ENABLE, value: "true" }
             - { name: KOGITO_PERSISTENCE_TYPE, value: "ephemeral" }
@@ -1180,7 +1180,7 @@ metadata:
   annotations:
     teleport.dev/name: "drools-jobs-service"
     teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "jobs-drools.app.suncoast.systems"
+    teleport.dev/public-addr: "jobs-drools.teleport.app.suncoast.systems"
     teleport.dev/description: "Kogito Jobs Service - Asynchronous job processing and scheduling"
   labels:
     app.kubernetes.io/name: kogito-jobs-service
@@ -1218,7 +1218,7 @@ spec:
           env:
             - { name: QUARKUS_HTTP_PORT, value: "8080" }
             - { name: QUARKUS_HTTP_HOST, value: "0.0.0.0" }
-            - { name: KOGITO_DATA_INDEX_URL, value: "https://monitoring-drools.app.suncoast.systems" }
+            - { name: KOGITO_DATA_INDEX_URL, value: "https://monitoring-drools.teleport.app.suncoast.systems" }
           readinessProbe:
             httpGet: { path: /q/health/ready, port: 8080 }
             initialDelaySeconds: 15
@@ -1240,7 +1240,7 @@ metadata:
   annotations:
     teleport.dev/name: "drools-data-index"
     teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "monitoring-drools.app.suncoast.systems"
+    teleport.dev/public-addr: "monitoring-drools.teleport.app.suncoast.systems"
     teleport.dev/description: "Kogito Data Index - Monitoring and analytics"
   labels:
     app.kubernetes.io/name: kogito-data-index
@@ -1271,7 +1271,7 @@ data:
         name: drools-rules-service
     drools:
       kie-server:
-        location: https://api-drools.app.suncoast.systems/kie-server/services/rest/server
+        location: https://api-drools.teleport.app.suncoast.systems/kie-server/services/rest/server
         username: kieserver
         password: kieserver1!
       rules:
@@ -1320,7 +1320,7 @@ spec:
           ports: [{ containerPort: 8080 }]
           env:
             - { name: JAVA_OPTS, value: "-Xms128m -Xmx512m" }
-            - { name: KIE_SERVER_URL, value: "https://api-drools.app.suncoast.systems/kie-server/services/rest/server" }
+            - { name: KIE_SERVER_URL, value: "https://api-drools.teleport.app.suncoast.systems/kie-server/services/rest/server" }
           volumeMounts:
             - { name: config, mountPath: /app/config }
           readinessProbe:
@@ -1347,7 +1347,7 @@ metadata:
   annotations:
     teleport.dev/name: "drools-rules-service"
     teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "rules-drools.app.suncoast.systems"
+  teleport.dev/public-addr: "rules-drools.teleport.app.suncoast.systems"
     teleport.dev/description: "Drools Rules Service - Embeddable library service"
   labels:
     app.kubernetes.io/name: drools-rules-service

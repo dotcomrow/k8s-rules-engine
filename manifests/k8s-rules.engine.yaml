@@ -790,15 +790,6 @@ kind: Service
 metadata:
   name: kie-server
   namespace: drools
-  annotations:
-    teleport.dev/name: "drools-kie-server"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "kie-server-drools.teleport.app.suncoast.systems"
-    teleport.dev/description: "KIE Server - Rules execution runtime and management API"
-  labels:
-    app.kubernetes.io/name: kie-server
-    app.kubernetes.io/component: runtime
-    teleport.dev/enroll: "true"
 spec:
   selector:
     app: kie-server
@@ -889,15 +880,6 @@ kind: Service
 metadata:
   name: kogito-decision-service
   namespace: drools
-  annotations:
-    teleport.dev/name: "drools-decision-service"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "decisions-drools.teleport.app.suncoast.systems"
-    teleport.dev/description: "KIE Server Showcase - Production rules execution and decision API"
-  labels:
-    app.kubernetes.io/name: kogito-decision-service
-    app.kubernetes.io/component: rules-execution
-    teleport.dev/enroll: "true"
 spec:
   selector:
     app: kogito-decision-service
@@ -1092,16 +1074,6 @@ kind: Service
 metadata:
   name: drools-api-gateway
   namespace: drools
-  annotations:
-    teleport.dev/name: "drools-api-gateway"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "api-drools.teleport.app.suncoast.systems"
-    teleport.dev/description: "API Gateway - Main entry point for Drools platform"
-  labels:
-    teleport.dev/enroll: "true"
-    app.kubernetes.io/name: api-gateway
-    app.kubernetes.io/component: gateway
-    teleport.dev/app: "drools-api-gateway"
 spec:
   selector:
     app: api-gateway
@@ -1177,15 +1149,6 @@ kind: Service
 metadata:
   name: kogito-jobs-service
   namespace: drools
-  annotations:
-    teleport.dev/name: "drools-jobs-service"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "jobs-drools.teleport.app.suncoast.systems"
-    teleport.dev/description: "Kogito Jobs Service - Asynchronous job processing and scheduling"
-  labels:
-    app.kubernetes.io/name: kogito-jobs-service
-    app.kubernetes.io/component: jobs
-    teleport.dev/enroll: "true"
 spec:
   selector:
     app: kogito-jobs-service
@@ -1237,15 +1200,6 @@ kind: Service
 metadata:
   name: kogito-data-index
   namespace: drools
-  annotations:
-    teleport.dev/name: "drools-data-index"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "monitoring-drools.teleport.app.suncoast.systems"
-    teleport.dev/description: "Kogito Data Index - Monitoring and analytics"
-  labels:
-    app.kubernetes.io/name: kogito-data-index
-    app.kubernetes.io/component: monitoring
-    teleport.dev/enroll: "true"
 spec:
   selector:
     app: kogito-data-index
@@ -1344,15 +1298,6 @@ kind: Service
 metadata:
   name: drools-rules-service
   namespace: drools
-  annotations:
-    teleport.dev/name: "drools-rules-service"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "rules-drools.teleport.app.suncoast.systems"
-    teleport.dev/description: "Drools Rules Service - Embeddable library service"
-  labels:
-    app.kubernetes.io/name: drools-rules-service
-    app.kubernetes.io/component: embedded-runtime
-    teleport.dev/enroll: "true"
 spec:
   selector:
     app: drools-rules-service

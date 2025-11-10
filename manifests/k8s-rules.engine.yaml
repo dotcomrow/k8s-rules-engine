@@ -1248,7 +1248,7 @@ spec:
     spec:
       containers:
         - name: drools-service
-          image: openjdk:11-jre-slim
+          image: eclipse-temurin:11-jre
           command: ["sh","-c"]
           args:
             - |

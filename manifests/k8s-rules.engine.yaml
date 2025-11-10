@@ -122,42 +122,33 @@ spec:
                 sleep 3
               done
 
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
-              DO $$
-              BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROLE_GROUP}') THEN
-                  CREATE ROLE ${ROLE_GROUP} NOLOGIN;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROLE_OWNER}') THEN
-                  CREATE ROLE ${ROLE_OWNER} LOGIN INHERIT;
-                END IF;
-              END
-              $$;
-              GRANT ${ROLE_GROUP} TO ${ROLE_OWNER};
-              GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};
-              EOSQL
+              # Create roles using individual commands to avoid DO block issues
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "SELECT rolname FROM pg_roles WHERE rolname = '${ROLE_GROUP}'" | grep -q "${ROLE_GROUP}" || \
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "CREATE ROLE ${ROLE_GROUP} NOLOGIN;"
+              
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "SELECT rolname FROM pg_roles WHERE rolname = '${ROLE_OWNER}'" | grep -q "${ROLE_OWNER}" || \
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "CREATE ROLE ${ROLE_OWNER} LOGIN INHERIT;"
+              
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "GRANT ${ROLE_GROUP} TO ${ROLE_OWNER};"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};"
 
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
-              CREATE SCHEMA IF NOT EXISTS drools AUTHORIZATION ${ROLE_OWNER};
-              CREATE SCHEMA IF NOT EXISTS kie_server AUTHORIZATION ${ROLE_OWNER};
-              CREATE SCHEMA IF NOT EXISTS kogito AUTHORIZATION ${ROLE_OWNER};
-              CREATE SCHEMA IF NOT EXISTS data_index AUTHORIZATION ${ROLE_OWNER};
-              ALTER ROLE ${ROLE_OWNER} SET search_path = drools,kie_server,kogito,data_index,public;
-              GRANT CONNECT ON DATABASE ${DB} TO ${ROLE_OWNER};
-              EOSQL
+              # Create schemas using individual commands
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "CREATE SCHEMA IF NOT EXISTS drools AUTHORIZATION ${ROLE_OWNER};"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "CREATE SCHEMA IF NOT EXISTS kie_server AUTHORIZATION ${ROLE_OWNER};"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "CREATE SCHEMA IF NOT EXISTS kogito AUTHORIZATION ${ROLE_OWNER};"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "CREATE SCHEMA IF NOT EXISTS data_index AUTHORIZATION ${ROLE_OWNER};"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "ALTER ROLE ${ROLE_OWNER} SET search_path = drools,kie_server,kogito,data_index,public;"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "GRANT CONNECT ON DATABASE ${DB} TO ${ROLE_OWNER};"
 
+              # Set permissions for each schema using individual commands
               for schema in drools kie_server kogito data_index; do
-                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
-              SET ROLE ${ROLE_OWNER};
-              GRANT USAGE, CREATE ON SCHEMA ${schema} TO ${ROLE_GROUP};
-              GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${ROLE_GROUP};
-              GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO ${ROLE_GROUP};
-              ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema}
-                GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${ROLE_GROUP};
-              ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema}
-                GRANT USAGE, SELECT ON SEQUENCES TO ${ROLE_GROUP};
-              RESET ROLE;
-              EOSQL
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "SET ROLE ${ROLE_OWNER};"
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "GRANT USAGE, CREATE ON SCHEMA ${schema} TO ${ROLE_GROUP};"
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${ROLE_GROUP};"
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO ${ROLE_GROUP};"
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${ROLE_GROUP};"
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema} GRANT USAGE, SELECT ON SEQUENCES TO ${ROLE_GROUP};"
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "RESET ROLE;"
               done
 
               if ! vault secrets list -format=json | jq -e 'has("yugabyte-db/")' >/dev/null 2>&1; then

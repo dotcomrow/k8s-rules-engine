@@ -63,6 +63,9 @@ spec:
               ROLE_GROUP=drools
               ROLE_OWNER=drools_app
               VAULTADMIN_USER=vaultadmin
+              PGCONNECT_TIMEOUT=5
+              PGAPPNAME="drools-yugabyte-config"
+              export PGCONNECT_TIMEOUT PGAPPNAME
 
               run_psql_ddl() {
                 local db="$1"
@@ -90,6 +93,26 @@ spec:
                     continue
                   fi
                   return $status
+                done
+              }
+
+              wait_for_admin_conn() {
+                local attempt=1
+                local max=40
+                local out
+                while :; do
+                  if out="$(PGPASSWORD="$VAULTADMIN_PASS" psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT version();" 2>&1)"; then
+                    echo "✅ Preflight (admin) connected to yugabyte: ${out:-ok}"
+                    return 0
+                  fi
+                  if [ $attempt -ge $max ]; then
+                    echo "❌ Preflight (admin) failed after $max attempts:"
+                    printf '%s\n' "$out"
+                    exit 1
+                  fi
+                  echo "⏳ Waiting for admin DB connection ($attempt/$max)..."
+                  attempt=$((attempt+1))
+                  sleep 3
                 done
               }
 
@@ -152,6 +175,7 @@ spec:
                 sleep 5
               done
               export PGPASSWORD="$VAULTADMIN_PASS"
+              wait_for_admin_conn
 
               while :; do
                 DB_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)"

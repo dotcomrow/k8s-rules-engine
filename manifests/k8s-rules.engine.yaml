@@ -75,6 +75,16 @@ spec:
               done
               export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
 
+              gen_pass() {
+                # Vault CLI treats leading @ as "read from file", so avoid passwords beginning with @
+                while :; do
+                  P="$(tr -dc 'A-Za-z0-9@#%^+=_' </dev/urandom | head -c 32)"
+                  case "$P" in @*) continue ;; esac
+                  printf '%s' "$P"
+                  return
+                done
+              }
+
               echo "🧩 Ensuring KV v2 at 'secret/'..."
               while :; do
                 if vault secrets list -format=json 2>/dev/null \
@@ -90,11 +100,11 @@ spec:
 
               echo "🔐 Seeding drools admin + kie-user (if missing)..."
               if ! vault kv get -format=json secret/drools/admin >/dev/null 2>&1; then
-                PASS="$(tr -dc 'A-Za-z0-9@#%^+=_' </dev/urandom | head -c 32)"
+                PASS="$(gen_pass)"
                 vault kv put secret/drools/admin username=admin password="$PASS"
               fi
               if ! vault kv get -format=json secret/drools/kie-user >/dev/null 2>&1; then
-                PASS="$(tr -dc 'A-Za-z0-9@#%^+=_' </dev/urandom | head -c 32)"
+                PASS="$(gen_pass)"
                 vault kv put secret/drools/kie-user username=kieserver password="$PASS"
               fi
 

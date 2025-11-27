@@ -55,7 +55,7 @@ spec:
           command: ["/bin/sh","-c"]
           args:
             - |
-              set -eu
+              set -euo pipefail
 
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
@@ -63,6 +63,35 @@ spec:
               ROLE_GROUP=drools
               ROLE_OWNER=drools_app
               VAULTADMIN_USER=vaultadmin
+
+              run_psql_ddl() {
+                local db="$1"
+                local sql="$2"
+                local user="${3:-$VAULTADMIN_USER}"
+                local attempt=1
+                local max=5
+                local output status
+
+                while :; do
+                  if output="$(psql -h "$PGHOST" -p "$PGPORT" -U "$user" -d "$db" -v ON_ERROR_STOP=1 -c "$sql" 2>&1)"; then
+                    printf '%s\n' "$output"
+                    return 0
+                  fi
+                  status=$?
+                  printf '%s\n' "$output"
+                  if printf '%s\n' "$output" | grep -q "Restarting a DDL transaction not supported"; then
+                    if [ $attempt -ge $max ]; then
+                      echo "❌ DDL failed after $max attempts"
+                      return $status
+                    fi
+                    attempt=$((attempt+1))
+                    echo "⚠️  Yugabyte DDL restart, retrying in 2s ($attempt/$max)..."
+                    sleep 2
+                    continue
+                  fi
+                  return $status
+                done
+              }
 
               apk add --no-cache postgresql15-client jq netcat-openbsd curl
 
@@ -132,33 +161,35 @@ spec:
                 sleep 3
               done
 
-              # Create roles using individual commands to avoid DO block issues
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "SELECT rolname FROM pg_roles WHERE rolname = '${ROLE_GROUP}'" | grep -q "${ROLE_GROUP}" || \
-                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "CREATE ROLE ${ROLE_GROUP} NOLOGIN;"
-              
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "SELECT rolname FROM pg_roles WHERE rolname = '${ROLE_OWNER}'" | grep -q "${ROLE_OWNER}" || \
-                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "CREATE ROLE ${ROLE_OWNER} LOGIN INHERIT;"
-              
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "GRANT ${ROLE_GROUP} TO ${ROLE_OWNER};"
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -c "GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};"
+              # Create roles with retries to avoid Yugabyte DDL restart errors
+              GROUP_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_roles WHERE rolname='${ROLE_GROUP}'" 2>/dev/null | tr -d '[:space:]' || true)"
+              if [ "$GROUP_EXISTS" != "1" ]; then
+                run_psql_ddl yugabyte "CREATE ROLE ${ROLE_GROUP} NOLOGIN;"
+              fi
 
-              # Create schemas using individual commands
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "CREATE SCHEMA IF NOT EXISTS drools AUTHORIZATION ${ROLE_OWNER};"
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "CREATE SCHEMA IF NOT EXISTS kie_server AUTHORIZATION ${ROLE_OWNER};"
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "CREATE SCHEMA IF NOT EXISTS kogito AUTHORIZATION ${ROLE_OWNER};"
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "CREATE SCHEMA IF NOT EXISTS data_index AUTHORIZATION ${ROLE_OWNER};"
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "ALTER ROLE ${ROLE_OWNER} SET search_path = drools,kie_server,kogito,data_index,public;"
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "GRANT CONNECT ON DATABASE ${DB} TO ${ROLE_OWNER};"
+              OWNER_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_roles WHERE rolname='${ROLE_OWNER}'" 2>/dev/null | tr -d '[:space:]' || true)"
+              if [ "$OWNER_EXISTS" != "1" ]; then
+                run_psql_ddl yugabyte "CREATE ROLE ${ROLE_OWNER} LOGIN INHERIT;"
+              fi
 
-              # Set permissions for each schema using individual commands
+              run_psql_ddl yugabyte "GRANT ${ROLE_GROUP} TO ${ROLE_OWNER};"
+              run_psql_ddl yugabyte "GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};"
+
+              # Create schemas and privileges with retries
+              run_psql_ddl "$DB" "CREATE SCHEMA IF NOT EXISTS drools AUTHORIZATION ${ROLE_OWNER};"
+              run_psql_ddl "$DB" "CREATE SCHEMA IF NOT EXISTS kie_server AUTHORIZATION ${ROLE_OWNER};"
+              run_psql_ddl "$DB" "CREATE SCHEMA IF NOT EXISTS kogito AUTHORIZATION ${ROLE_OWNER};"
+              run_psql_ddl "$DB" "CREATE SCHEMA IF NOT EXISTS data_index AUTHORIZATION ${ROLE_OWNER};"
+              run_psql_ddl "$DB" "ALTER ROLE ${ROLE_OWNER} SET search_path = drools,kie_server,kogito,data_index,public;"
+              run_psql_ddl "$DB" "GRANT CONNECT ON DATABASE ${DB} TO ${ROLE_OWNER};"
+
+              # Set permissions for each schema using retries (Yugabyte sometimes forces DDL restart)
               for schema in drools kie_server kogito data_index; do
-                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "SET ROLE ${ROLE_OWNER};"
-                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "GRANT USAGE, CREATE ON SCHEMA ${schema} TO ${ROLE_GROUP};"
-                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${ROLE_GROUP};"
-                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO ${ROLE_GROUP};"
-                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${ROLE_GROUP};"
-                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema} GRANT USAGE, SELECT ON SEQUENCES TO ${ROLE_GROUP};"
-                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -c "RESET ROLE;"
+                run_psql_ddl "$DB" "GRANT USAGE, CREATE ON SCHEMA ${schema} TO ${ROLE_GROUP};"
+                run_psql_ddl "$DB" "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${ROLE_GROUP};"
+                run_psql_ddl "$DB" "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO ${ROLE_GROUP};"
+                run_psql_ddl "$DB" "ALTER DEFAULT PRIVILEGES FOR ROLE ${ROLE_OWNER} IN SCHEMA ${schema} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${ROLE_GROUP};"
+                run_psql_ddl "$DB" "ALTER DEFAULT PRIVILEGES FOR ROLE ${ROLE_OWNER} IN SCHEMA ${schema} GRANT USAGE, SELECT ON SEQUENCES TO ${ROLE_GROUP};"
               done
 
               if ! vault secrets list -format=json | jq -e 'has("yugabyte-db/")' >/dev/null 2>&1; then

@@ -19,9 +19,6 @@ spec:
       containers:
         - name: copy-secret
           image: alpine/k8s:1.31.4
-          resources:
-            requests: { cpu: "50m", memory: "64Mi" }
-            limits:   { cpu: "200m", memory: "256Mi" }
           command: ["/bin/sh","-c"]
           args:
             - |
@@ -250,9 +247,6 @@ spec:
             - name: root-token
               mountPath: /vault-token
               readOnly: true
-          resources:
-            requests: { cpu: "50m",  memory: "64Mi" }
-            limits:   { cpu: "200m", memory: "256Mi" }
 
 ---
 # RBAC for initialization jobs
@@ -697,9 +691,6 @@ spec:
             periodSeconds: 60
             timeoutSeconds: 30
             failureThreshold: 3
-          resources:
-            requests: { cpu: "500m", memory: "1Gi" }
-            limits:   { cpu: "2000m", memory: "3Gi" }
 
 ---
 apiVersion: v1
@@ -836,9 +827,6 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 5
-          resources:
-            requests: { cpu: "500m", memory: "1Gi" }
-            limits:   { cpu: "2000m", memory: "3Gi" }
 
 ---
 apiVersion: v1
@@ -923,9 +911,6 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 5
-          resources:
-            requests: { cpu: "500m", memory: "1Gi" }
-            limits:   { cpu: "2000m", memory: "3Gi" }
       volumes:
         - name: welcome-content
           emptyDir: {}
@@ -1117,9 +1102,6 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
-          resources:
-            requests: { memory: "64Mi", cpu: "100m" }
-            limits:   { memory: "256Mi", cpu: "500m" }
       volumes:
         - name: nginx-config
           configMap: { name: api-gateway-nginx-conf }
@@ -1167,9 +1149,6 @@ spec:
               until kubectl get pods -n drools -l app=kogito-decision-service --field-selector=status.phase=Running 2>/dev/null | grep -q "Running"; do sleep 10; done
               until kubectl get pods -n drools -l app=api-gateway --field-selector=status.phase=Running 2>/dev/null | grep -q "Running"; do sleep 10; done
               sleep 30
-          resources:
-            requests: { cpu: "50m", memory: "64Mi" }
-            limits:   { cpu: "200m", memory: "256Mi" }
       containers:
         - name: kogito-jobs-service
           image: quay.io/kiegroup/kogito-jobs-service-ephemeral:1.40
@@ -1195,9 +1174,6 @@ spec:
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 3
-          resources:
-            requests: { memory: "128Mi", cpu: "100m" }
-            limits:   { memory: "512Mi", cpu: "500m" }
 
 ---
 apiVersion: v1
@@ -1246,9 +1222,6 @@ spec:
             httpGet: { path: /q/health/live, port: 8080 }
             initialDelaySeconds: 30
             periodSeconds: 10
-          resources:
-            requests: { memory: "256Mi", cpu: "200m" }
-            limits:   { memory: "1Gi",   cpu: "800m" }
 
 ---
 apiVersion: v1
@@ -1341,9 +1314,6 @@ spec:
             exec: { command: ["sh","-c","echo alive"] }
             initialDelaySeconds: 15
             periodSeconds: 10
-          resources:
-            requests: { memory: "256Mi", cpu: "200m" }
-            limits:   { memory: "1Gi",   cpu: "800m" }
       volumes:
         - name: config
           configMap: { name: drools-service-config }

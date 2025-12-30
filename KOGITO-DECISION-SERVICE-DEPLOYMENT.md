@@ -96,17 +96,7 @@ env:
   value: "INFO"
 ```
 
-### 4. Resource Limits
-Adjust based on your decision complexity:
-```yaml
-resources:
-  requests:
-    memory: "256Mi"
-    cpu: "200m"  
-  limits:
-    memory: "1Gi"
-    cpu: "800m"
-```
+Resource sizing is managed dynamically by VPA/Goldilocks; no static requests/limits are set in manifests.
 
 ## Integration with KIE Server
 
@@ -127,6 +117,6 @@ If your decision service fails:
 1. Check logs: `kubectl logs -n drools deployment/kogito-decision-service`
 2. Verify health endpoints respond correctly
 3. Ensure your JAR file is properly built and included in the image
-4. Check resource limits and adjust if needed
+4. Review VPA/Goldilocks recommendations if the service is under- or over-provisioned
 
 The mock service ensures your platform remains operational while you develop your decision services.

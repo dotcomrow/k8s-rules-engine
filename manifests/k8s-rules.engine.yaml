@@ -315,8 +315,6 @@ metadata:
   annotations:
     linkerd.io/inject: enabled
     field.cattle.io/projectId: local:applications
-    scheduler.alpha.kubernetes.io/node-selector: "dedicated=work-node"
-
 ---
 # Service Accounts
 apiVersion: v1

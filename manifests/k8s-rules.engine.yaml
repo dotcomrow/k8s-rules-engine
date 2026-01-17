@@ -677,34 +677,6 @@ data:
     if (outcome != success) of /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:read-resource()
       /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:add(value="${env.OIDC_KIE_SERVER_CLIENT_SECRET:${env.OIDC_CLIENT_SECRET:}}")
     end-if
-    if (outcome != success) of /subsystem=elytron/service-loader-http-server-mechanism-factory=keycloak:read-resource()
-      /subsystem=elytron/service-loader-http-server-mechanism-factory=keycloak:add(module=org.keycloak.keycloak-wildfly-elytron-oidc-adapter)
-    end-if
-    if (outcome != success) of /subsystem=elytron/aggregate-http-server-mechanism-factory=global-keycloak:read-resource()
-      /subsystem=elytron/aggregate-http-server-mechanism-factory=global-keycloak:add(http-server-mechanism-factories=[global,keycloak])
-    end-if
-    if (outcome != success) of /subsystem=elytron/http-authentication-factory=keycloak-http-authentication:read-resource()
-      /subsystem=elytron/http-authentication-factory=keycloak-http-authentication:add(http-server-mechanism-factory=global-keycloak,security-domain=ApplicationDomain,mechanism-configurations=[{mechanism-name=KEYCLOAK},{mechanism-name=FORM,mechanism-realm=Application Realm},{mechanism-name=BASIC,mechanism-realm=Application Realm}])
-    end-if
-    # Map Keycloak roles into Elytron using the standard "roles" attribute
-    if (outcome != success) of /subsystem=elytron/simple-role-decoder=kc-roles:read-resource()
-      /subsystem=elytron/simple-role-decoder=kc-roles:add(attribute=roles)
-    end-if
-    if (outcome == success) of /subsystem=elytron/security-domain=ApplicationDomain/realm=KieRealm:read-resource()
-      /subsystem=elytron/security-domain=ApplicationDomain/realm=KieRealm:write-attribute(name=role-decoder,value=kc-roles)
-    end-if
-    if (outcome == success) of /subsystem=undertow/application-security-domain=other:read-resource()
-      batch
-      /subsystem=undertow/application-security-domain=other:undefine-attribute(name=security-domain)
-      /subsystem=undertow/application-security-domain=other:write-attribute(name=http-authentication-factory,value=keycloak-http-authentication)
-      run-batch
-    end-if
-    if (outcome == success) of /subsystem=undertow/application-security-domain=default:read-resource()
-      batch
-      /subsystem=undertow/application-security-domain=default:undefine-attribute(name=security-domain)
-      /subsystem=undertow/application-security-domain=default:write-attribute(name=http-authentication-factory,value=keycloak-http-authentication)
-      run-batch
-    end-if
     if (outcome == success) of /subsystem=undertow/server=default-server/http-listener=default:read-resource()
       /subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=proxy-address-forwarding,value=true)
     end-if
@@ -771,10 +743,6 @@ data:
     fi
     echo "Enabling OIDC via CLI..."
     /opt/jboss/wildfly/bin/jboss-cli.sh --file=/oidc/enable-oidc.cli
-    # Ensure Elytron maps Keycloak roles via the "roles" attribute
-    if grep -q 'realm name="KieRealm" role-decoder="from-roles-attribute"' /opt/jboss/wildfly/standalone/configuration/standalone.xml; then
-      sed -i 's/realm name="KieRealm" role-decoder="from-roles-attribute"/realm name="KieRealm" role-decoder="kc-roles"/' /opt/jboss/wildfly/standalone/configuration/standalone.xml
-    fi
     echo "OIDC configuration applied."
 
 # =========================

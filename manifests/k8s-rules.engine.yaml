@@ -814,13 +814,6 @@ data:
     if (outcome != success) of /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:read-resource()
       /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:add(value="${env.OIDC_KIE_SERVER_CLIENT_SECRET:${env.OIDC_CLIENT_SECRET:}}")
     end-if
-    if (outcome != success) of /subsystem=elytron/token-realm=keycloak-token-realm:read-resource()
-      /subsystem=elytron/token-realm=keycloak-token-realm:add(jwt={issuer=["${env.OIDC_AUTH_URL}/realms/${env.OIDC_REALM}"], public-key="${env.OIDC_JWT_PUBLIC_KEY}"}, principal-claim=preferred_username)
-    end-if
-    if (outcome == success) of /subsystem=elytron/security-domain=ApplicationDomain:read-resource()
-      /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=realms, value=[{realm=keycloak-token-realm, role-decoder=from-roles-attribute},{realm=KieRealm, role-decoder=from-roles-attribute},{realm=ApplicationRealm, role-decoder=groups-to-roles},{realm=local}])
-      /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=default-realm, value=keycloak-token-realm)
-    end-if
     if (outcome == success) of /subsystem=undertow/server=default-server/http-listener=default:read-resource()
       /subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=proxy-address-forwarding,value=true)
     end-if

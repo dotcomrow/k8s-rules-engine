@@ -484,6 +484,7 @@ spec:
               MAPPER_NAME="roles-claim"
               CLIENT_ROLE_MAPPER_NAME="client-roles-claim"
               ROLE_LIST="admin rest-all developer analyst manager process-admin user kie-server"
+              WORKBENCH_PUBLIC_URL="https://workbench-drools.teleport.app.suncoast.systems"
 
               if [ -z "${KIE_SERVER_SERVICE_CLIENT_ID:-}" ]; then
                 echo "❌ Missing KIE_SERVER_SERVICE_CLIENT_ID in keycloak-env.sh"
@@ -626,6 +627,33 @@ spec:
                 echo "✅ Added Keycloak mapper $CLIENT_ROLE_MAPPER_NAME for $client_id"
               }
 
+              ensure_workbench_redirects() {
+                local client_id="$1"
+                local client_uuid=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  client_uuid="$line"
+                  break
+                done < <($KCADM get clients -r "$REALM" -q "clientId=$client_id" \
+                  --fields id --format csv)
+                if [ -z "$client_uuid" ] || [ "$client_uuid" = "id" ]; then
+                  echo "❌ Keycloak client not found: $client_id"
+                  exit 1
+                fi
+
+                echo "Updating redirect URIs for $client_id"
+                $KCADM update "clients/$client_uuid" -r "$REALM" \
+                  -s "redirectUris=[\"${WORKBENCH_PUBLIC_URL}/*\"]" \
+                  -s "webOrigins=[\"${WORKBENCH_PUBLIC_URL}\"]"
+                echo "Updated redirect URIs for $client_id"
+              }
+
               for i in $(seq 1 30); do
                 if $KCADM config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
                   --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
@@ -644,6 +672,7 @@ spec:
               ensure_roles_mapper "$WORKBENCH_CLIENT_ID"
               ensure_roles_mapper "$KIE_SERVER_SERVICE_CLIENT_ID"
               ensure_client_roles_mapper "$WORKBENCH_CLIENT_ID"
+              ensure_workbench_redirects "$WORKBENCH_CLIENT_ID"
 
               KIE_CLIENT_UUID=""
               while IFS= read -r line; do

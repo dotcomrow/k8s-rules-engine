@@ -755,6 +755,9 @@ data:
     if (outcome == success) of /subsystem=elytron/security-domain=ApplicationDomain:read-resource()
       /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=realms,value=[{realm=KeycloakRealm,role-decoder=from-roles-attribute},{realm=KieRealm,role-decoder=from-roles-attribute},{realm=ApplicationRealm,role-decoder=groups-to-roles},{realm=local}])
     end-if
+    if (outcome == success) of /subsystem=elytron/security-domain=ApplicationDomain:read-attribute(name=default-realm)
+      /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=default-realm,value=KeycloakRealm)
+    end-if
     if (outcome != success) of /subsystem=elytron/service-loader-http-server-mechanism-factory=keycloak:read-resource()
       /subsystem=elytron/service-loader-http-server-mechanism-factory=keycloak:add(module=org.keycloak.keycloak-wildfly-elytron-oidc-adapter)
     end-if

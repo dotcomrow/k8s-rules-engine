@@ -738,6 +738,10 @@ data:
     if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.BearerTokenRequestAuthenticator:read-resource()
       /subsystem=logging/logger=org.keycloak.adapters.BearerTokenRequestAuthenticator:add(level=TRACE)
     end-if
+    # Keycloak adapter stores roles in the "roles" attribute; align Elytron role decoder.
+    if (outcome == success) of /subsystem=elytron/simple-role-decoder=from-roles-attribute:read-resource()
+      /subsystem=elytron/simple-role-decoder=from-roles-attribute:write-attribute(name=attribute,value=roles)
+    end-if
     stop-embedded-server
   configure-oidc.sh: |
     #!/usr/bin/env bash
@@ -845,6 +849,10 @@ data:
     end-if
     if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.BearerTokenRequestAuthenticator:read-resource()
       /subsystem=logging/logger=org.keycloak.adapters.BearerTokenRequestAuthenticator:add(level=TRACE)
+    end-if
+    # Keycloak adapter stores roles in the "roles" attribute; align Elytron role decoder.
+    if (outcome == success) of /subsystem=elytron/simple-role-decoder=from-roles-attribute:read-resource()
+      /subsystem=elytron/simple-role-decoder=from-roles-attribute:write-attribute(name=attribute,value=roles)
     end-if
     stop-embedded-server
   configure-oidc.sh: |

@@ -766,6 +766,114 @@ data:
     /opt/jboss/wildfly/bin/jboss-cli.sh --file=/oidc/enable-oidc.cli
     echo "OIDC configuration applied."
 
+# KIE Server uses a variant without Elytron mechanism wiring (standalone-full-kie-server.xml lacks it).
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wildfly-oidc-config-kieserver
+  namespace: drools
+data:
+  enable-oidc.cli: |
+    embed-server --std-out=echo --server-config=${env.WILDFLY_SERVER_CONFIG:standalone.xml}
+    # reloader-bump: 2026-01-14
+    if (outcome != success) of /extension=org.keycloak.keycloak-adapter-subsystem:read-resource()
+      /extension=org.keycloak.keycloak-adapter-subsystem:add()
+    end-if
+    if (outcome != success) of /subsystem=keycloak:read-resource()
+      /subsystem=keycloak:add()
+    end-if
+    if (outcome != success) of /subsystem=keycloak/secure-deployment=business-central.war:read-resource()
+      /subsystem=keycloak/secure-deployment=business-central.war:add(realm="${env.OIDC_REALM}",auth-server-url="${env.OIDC_AUTH_URL}",ssl-required=EXTERNAL,resource="${env.OIDC_CLIENT_ID}",public-client=false,bearer-only=${env.OIDC_BEARER_ONLY:false},principal-attribute=preferred_username)
+    end-if
+    if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-resource()
+      /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=use-resource-role-mappings,value=false)
+    end-if
+    if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-attribute(name=verify-token-audience)
+      /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=verify-token-audience,value=false)
+    end-if
+    if (outcome != success) of /subsystem=keycloak/secure-deployment=business-central.war/credential=secret:read-resource()
+      /subsystem=keycloak/secure-deployment=business-central.war/credential=secret:add(value="${env.OIDC_CLIENT_SECRET:}")
+    end-if
+    if (outcome != success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
+      /subsystem=keycloak/secure-deployment=kie-server.war:add(realm="${env.OIDC_KIE_SERVER_REALM:${env.OIDC_REALM}}",auth-server-url="${env.OIDC_KIE_SERVER_AUTH_URL:${env.OIDC_AUTH_URL}}",ssl-required=EXTERNAL,resource="${env.OIDC_KIE_SERVER_CLIENT_ID}",public-client=false,bearer-only=${env.OIDC_KIE_SERVER_BEARER_ONLY:true},principal-attribute=preferred_username)
+    end-if
+    if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
+      /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=use-resource-role-mappings,value=false)
+    end-if
+    if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-attribute(name=verify-token-audience)
+      /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=verify-token-audience,value=false)
+    end-if
+    if (outcome != success) of /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:read-resource()
+      /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:add(value="${env.OIDC_KIE_SERVER_CLIENT_SECRET:${env.OIDC_CLIENT_SECRET:}}")
+    end-if
+    if (outcome == success) of /subsystem=undertow/server=default-server/http-listener=default:read-resource()
+      /subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=proxy-address-forwarding,value=true)
+    end-if
+    if (outcome != success) of /subsystem=undertow/configuration=filter/custom-filter=oidc-dumper:read-resource()
+      /subsystem=undertow/configuration=filter/custom-filter=oidc-dumper:add(class-name=io.undertow.server.handlers.RequestDumpingHandler,module=io.undertow.core)
+    end-if
+    if (outcome != success) of /subsystem=undertow/server=default-server/host=default-host/filter-ref=oidc-dumper:read-resource()
+      /subsystem=undertow/server=default-server/host=default-host/filter-ref=oidc-dumper:add()
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak:read-resource()
+      /subsystem=logging/logger=org.keycloak:add(level=TRACE)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.authorization:read-resource()
+      /subsystem=logging/logger=org.keycloak.authorization:add(level=TRACE)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters:add(level=DEBUG)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.OAuthRequestAuthenticator:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.OAuthRequestAuthenticator:add(level=DEBUG)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.rotation:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.rotation:add(level=DEBUG)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.authentication:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.authentication:add(level=DEBUG)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.servlet:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.servlet:add(level=DEBUG)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.RequestAuthenticator:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.RequestAuthenticator:add(level=TRACE)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.OAuthRequestAuthenticator:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.OAuthRequestAuthenticator:add(level=TRACE)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.BearerTokenRequestAuthenticator:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.BearerTokenRequestAuthenticator:add(level=TRACE)
+    end-if
+    stop-embedded-server
+  configure-oidc.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -f /vault-secrets/oidc-env.sh ]; then
+      # shellcheck disable=SC1091
+      . /vault-secrets/oidc-env.sh
+    fi
+    if [ "${OIDC_ENABLE:-false}" != "true" ]; then
+      echo "OIDC disabled; skipping CLI configuration."
+      exit 0
+    fi
+    MODULE_XML_ADDONS="/opt/jboss/wildfly/modules/system/add-ons/keycloak/org/keycloak/keycloak-adapter-subsystem/main/module.xml"
+    MODULE_XML_BASE="/opt/jboss/wildfly/modules/system/layers/base/org/keycloak/keycloak-adapter-subsystem/main/module.xml"
+    MODULE_XML=""
+    if [ -f "$MODULE_XML_ADDONS" ]; then
+      MODULE_XML="$MODULE_XML_ADDONS"
+    elif [ -f "$MODULE_XML_BASE" ]; then
+      MODULE_XML="$MODULE_XML_BASE"
+    fi
+    if [ -z "$MODULE_XML" ]; then
+      echo "❌ OIDC module missing at $MODULE_XML_ADDONS or $MODULE_XML_BASE; Keycloak adapter install failed."
+      exit 1
+    fi
+    echo "Enabling OIDC via CLI..."
+    /opt/jboss/wildfly/bin/jboss-cli.sh --file=/oidc/enable-oidc.cli
+    echo "OIDC configuration applied."
+
 # =========================
 # Redirect CLIs (WF23 expression-filter) – Workbench & KIE Server
 # =========================
@@ -936,7 +1044,7 @@ spec:
           emptyDir: {}
         - name: wildfly-oidc
           configMap:
-            name: wildfly-oidc-config
+            name: wildfly-oidc-config-kieserver
             items:
               - { key: enable-oidc.cli,    path: enable-oidc.cli,    mode: 0444 }
               - { key: configure-oidc.sh,  path: configure-oidc.sh,  mode: 0555 }

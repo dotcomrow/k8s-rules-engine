@@ -677,28 +677,26 @@ data:
     if (outcome != success) of /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:read-resource()
       /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:add(value="${env.OIDC_KIE_SERVER_CLIENT_SECRET:${env.OIDC_CLIENT_SECRET:}}")
     end-if
-    if (outcome == success) of /subsystem=elytron:read-resource()
-      if (outcome != success) of /subsystem=elytron/service-loader-http-server-mechanism-factory=keycloak:read-resource()
-        /subsystem=elytron/service-loader-http-server-mechanism-factory=keycloak:add(module=org.keycloak.keycloak-wildfly-elytron-oidc-adapter)
-      end-if
-      if (outcome != success) of /subsystem=elytron/aggregate-http-server-mechanism-factory=global-keycloak:read-resource()
-        /subsystem=elytron/aggregate-http-server-mechanism-factory=global-keycloak:add(http-server-mechanism-factories=[global,keycloak])
-      end-if
-      if (outcome != success) of /subsystem=elytron/http-authentication-factory=keycloak-http-authentication:read-resource()
-        /subsystem=elytron/http-authentication-factory=keycloak-http-authentication:add(http-server-mechanism-factory=global-keycloak,security-domain=ApplicationDomain,mechanism-configurations=[{mechanism-name=KEYCLOAK},{mechanism-name=FORM,mechanism-realm=Application Realm},{mechanism-name=BASIC,mechanism-realm=Application Realm}])
-      end-if
-      if (outcome == success) of /subsystem=undertow/application-security-domain=other:read-resource()
-        batch
-        /subsystem=undertow/application-security-domain=other:undefine-attribute(name=security-domain)
-        /subsystem=undertow/application-security-domain=other:write-attribute(name=http-authentication-factory,value=keycloak-http-authentication)
-        run-batch
-      end-if
-      if (outcome == success) of /subsystem=undertow/application-security-domain=default:read-resource()
-        batch
-        /subsystem=undertow/application-security-domain=default:undefine-attribute(name=security-domain)
-        /subsystem=undertow/application-security-domain=default:write-attribute(name=http-authentication-factory,value=keycloak-http-authentication)
-        run-batch
-      end-if
+    if (outcome != success) of /subsystem=elytron/service-loader-http-server-mechanism-factory=keycloak:read-resource()
+      /subsystem=elytron/service-loader-http-server-mechanism-factory=keycloak:add(module=org.keycloak.keycloak-wildfly-elytron-oidc-adapter)
+    end-if
+    if (outcome != success) of /subsystem=elytron/aggregate-http-server-mechanism-factory=global-keycloak:read-resource()
+      /subsystem=elytron/aggregate-http-server-mechanism-factory=global-keycloak:add(http-server-mechanism-factories=[global,keycloak])
+    end-if
+    if (outcome != success) of /subsystem=elytron/http-authentication-factory=keycloak-http-authentication:read-resource()
+      /subsystem=elytron/http-authentication-factory=keycloak-http-authentication:add(http-server-mechanism-factory=global-keycloak,security-domain=ApplicationDomain,mechanism-configurations=[{mechanism-name=KEYCLOAK},{mechanism-name=FORM,mechanism-realm=Application Realm},{mechanism-name=BASIC,mechanism-realm=Application Realm}])
+    end-if
+    if (outcome == success) of /subsystem=undertow/application-security-domain=other:read-resource()
+      batch
+      /subsystem=undertow/application-security-domain=other:undefine-attribute(name=security-domain)
+      /subsystem=undertow/application-security-domain=other:write-attribute(name=http-authentication-factory,value=keycloak-http-authentication)
+      run-batch
+    end-if
+    if (outcome == success) of /subsystem=undertow/application-security-domain=default:read-resource()
+      batch
+      /subsystem=undertow/application-security-domain=default:undefine-attribute(name=security-domain)
+      /subsystem=undertow/application-security-domain=default:write-attribute(name=http-authentication-factory,value=keycloak-http-authentication)
+      run-batch
     end-if
     if (outcome == success) of /subsystem=undertow/server=default-server/http-listener=default:read-resource()
       /subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=proxy-address-forwarding,value=true)

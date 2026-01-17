@@ -10,6 +10,8 @@ kind: Job
 metadata:
   name: copy-drools-vault-root-token
   namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
 spec:
   backoffLimit: 0
   template:
@@ -33,6 +35,8 @@ kind: Job
 metadata:
   name: drools-yugabyte-config
   namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
 spec:
   backoffLimit: 0
   template:
@@ -228,7 +232,19 @@ spec:
               path "yugabyte-db/static-creds/drools-app"           { capabilities = ["read"] }
               path "secret/data/drools/admin"                      { capabilities = ["read"] }
               path "secret/data/drools/kie-user"                   { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-drools-workbench" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-secret-drools-workbench" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-drools-kie-server" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-secret-drools-kie-server" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-drools-kie-server-service" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-secret-drools-kie-server-service" { capabilities = ["read"] }
               path "secret/data/vaultadmin"                        { capabilities = ["read"] }
+              EOF
+
+              vault policy write "keycloak-admin-job" - <<'EOF'
+              path "secret/data/keycloak/admin"                    { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-drools-workbench" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-drools-kie-server-service" { capabilities = ["read"] }
               EOF
 
               vault write auth/kubernetes/role/drools \
@@ -236,6 +252,12 @@ spec:
                 bound_service_account_namespaces="drools" \
                 policies="drools" \
                 ttl="48h"
+
+              vault write auth/kubernetes/role/keycloak-admin-job \
+                bound_service_account_names="keycloak-admin-job" \
+                bound_service_account_namespaces="drools" \
+                policies="keycloak-admin-job" \
+                ttl="1h"
 
               CREDS_JSON="$(vault read -format=json yugabyte-db/static-creds/drools-app)"
               DB_USER="$(printf '%s' "$CREDS_JSON" | jq -r .data.username)"
@@ -358,6 +380,259 @@ kind: ServiceAccount
 metadata:
   name: drools-api-gateway
   namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: keycloak-admin-job
+  namespace: drools
+
+# =========================
+# Keycloak Mapper – emit top-level roles claim for Workbench
+# =========================
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-workbench-roles-claim
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  backoffLimit: 4
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: "disabled"
+    spec:
+      serviceAccountName: keycloak-admin-job
+      restartPolicy: OnFailure
+      volumes:
+        - name: keycloak-admin-env
+          emptyDir: {}
+      initContainers:
+        - name: vault-keycloak-admin
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+              apk add --no-cache jq
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+
+              for i in $(seq 1 30); do
+                VAULT_TOKEN="$(vault write -field=token auth/kubernetes/login \
+                  role=keycloak-admin-job \
+                  jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token) 2>/dev/null || true)"
+                if [ -n "$VAULT_TOKEN" ]; then
+                  break
+                fi
+                echo "⏳ Waiting for Vault role keycloak-admin-job..."
+                sleep 5
+              done
+              if [ -z "${VAULT_TOKEN:-}" ]; then
+                echo "❌ Vault auth failed for keycloak-admin-job"
+                exit 1
+              fi
+              export VAULT_TOKEN
+
+              ADMIN_JSON="$(vault kv get -format=json secret/keycloak/admin)"
+              ADMIN_USER="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.username // empty')"
+              ADMIN_PASS="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.password // empty')"
+              if [ -z "$ADMIN_USER" ] || [ -z "$ADMIN_PASS" ]; then
+                echo "❌ Missing Keycloak admin credentials in Vault"
+                exit 1
+              fi
+
+              CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-workbench)"
+              CLIENT_ID="$(printf '%s' "$CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "$CLIENT_ID" ]; then
+                echo "❌ Missing drools-workbench client id in Vault"
+                exit 1
+              fi
+
+              KIE_CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-kie-server-service)"
+              KIE_CLIENT_ID="$(printf '%s' "$KIE_CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "$KIE_CLIENT_ID" ]; then
+                echo "❌ Missing drools-kie-server-service client id in Vault"
+                exit 1
+              fi
+
+              cat > /shared/keycloak-env.sh <<EOF
+              export KEYCLOAK_ADMIN="${ADMIN_USER}"
+              export KEYCLOAK_ADMIN_PASSWORD="${ADMIN_PASS}"
+              export WORKBENCH_CLIENT_ID="${CLIENT_ID}"
+              export KIE_SERVER_SERVICE_CLIENT_ID="${KIE_CLIENT_ID}"
+              EOF
+          volumeMounts:
+            - { name: keycloak-admin-env, mountPath: /shared }
+      containers:
+        - name: keycloak-mapper
+          image: ghcr.io/dotcomrow/keycloak-image:24.0.5
+          command: ["/bin/bash","-lc"]
+          args:
+            - |
+              set -euo pipefail
+              . /shared/keycloak-env.sh
+
+              KC_SERVER="http://keycloak.keycloak.svc.cluster.local:8080"
+              ADMIN_REALM="master"
+              REALM="internal"
+              KCADM="/opt/keycloak/bin/kcadm.sh"
+              MAPPER_NAME="roles-claim"
+              ROLE_LIST="admin rest-all developer analyst manager process-admin user kie-server"
+
+              if [ -z "${KIE_SERVER_SERVICE_CLIENT_ID:-}" ]; then
+                echo "❌ Missing KIE_SERVER_SERVICE_CLIENT_ID in keycloak-env.sh"
+                exit 1
+              fi
+
+              ensure_roles_mapper() {
+                local client_id="$1"
+                local client_uuid=""
+                local existing=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  client_uuid="$line"
+                  break
+                done < <($KCADM get clients -r "$REALM" -q "clientId=$client_id" \
+                  --fields id --format csv)
+                if [ -z "$client_uuid" ] || [ "$client_uuid" = "id" ]; then
+                  echo "❌ Keycloak client not found: $client_id"
+                  exit 1
+                fi
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id,name" ] || [ "$line" = "\"id\",\"name\"" ]; then
+                    continue
+                  fi
+                  IFS=, read -r id name <<< "$line"
+                  id=${id#\"}
+                  id=${id%\"}
+                  name=${name#\"}
+                  name=${name%\"}
+                  if [ "$name" = "$MAPPER_NAME" ]; then
+                    existing="$id"
+                    break
+                  fi
+                done < <($KCADM get "clients/$client_uuid/protocol-mappers/models" -r "$REALM" \
+                  --fields id,name --format csv)
+
+                if [ -n "$existing" ] && [ "$existing" != "id" ]; then
+                  echo "🔁 Updating Keycloak mapper $MAPPER_NAME for $client_id"
+                  $KCADM update "clients/$client_uuid/protocol-mappers/models/$existing" -r "$REALM" \
+                    -s "name=$MAPPER_NAME" \
+                    -s "protocol=openid-connect" \
+                    -s "protocolMapper=oidc-usermodel-realm-role-mapper" \
+                    -s "config.\"claim.name\"=roles" \
+                    -s "config.\"jsonType.label\"=String" \
+                    -s "config.\"multivalued\"=true" \
+                    -s "config.\"access.token.claim\"=true" \
+                    -s "config.\"id.token.claim\"=false" \
+                    -s "config.\"userinfo.token.claim\"=false"
+                  echo "✅ Updated Keycloak mapper $MAPPER_NAME for $client_id"
+                  return 0
+                fi
+
+                $KCADM create "clients/$client_uuid/protocol-mappers/models" -r "$REALM" \
+                  -s "name=$MAPPER_NAME" \
+                  -s "protocol=openid-connect" \
+                  -s "protocolMapper=oidc-usermodel-realm-role-mapper" \
+                  -s "config.\"claim.name\"=roles" \
+                  -s "config.\"jsonType.label\"=String" \
+                  -s "config.\"multivalued\"=true" \
+                  -s "config.\"access.token.claim\"=true" \
+                  -s "config.\"id.token.claim\"=false" \
+                  -s "config.\"userinfo.token.claim\"=false"
+                echo "✅ Added Keycloak mapper $MAPPER_NAME for $client_id"
+              }
+
+              for i in $(seq 1 30); do
+                if $KCADM config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
+                  --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+                  break
+                fi
+                echo "⏳ Waiting for Keycloak admin API..."
+                sleep 5
+              done
+
+              if ! $KCADM config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
+                --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+                echo "❌ Unable to authenticate to Keycloak admin API"
+                exit 1
+              fi
+
+              ensure_roles_mapper "$WORKBENCH_CLIENT_ID"
+              ensure_roles_mapper "$KIE_SERVER_SERVICE_CLIENT_ID"
+
+              KIE_CLIENT_UUID=""
+              while IFS= read -r line; do
+                line=${line%$'\r'}
+                if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                  continue
+                fi
+                line=${line#\"}
+                line=${line%\"}
+                KIE_CLIENT_UUID="$line"
+                break
+              done < <($KCADM get clients -r "$REALM" -q "clientId=$KIE_SERVER_SERVICE_CLIENT_ID" \
+                --fields id --format csv)
+              if [ -z "$KIE_CLIENT_UUID" ] || [ "$KIE_CLIENT_UUID" = "id" ]; then
+                echo "❌ Keycloak client not found: $KIE_SERVER_SERVICE_CLIENT_ID"
+                exit 1
+              fi
+
+              $KCADM update "clients/$KIE_CLIENT_UUID" -r "$REALM" -s "serviceAccountsEnabled=true" >/dev/null 2>&1 || true
+
+              SA_ID=""
+              SA_USERNAME=""
+              while IFS= read -r line; do
+                line=${line%$'\r'}
+                if [ -z "$line" ] || [ "$line" = "id,username" ] || [ "$line" = "\"id\",\"username\"" ]; then
+                  continue
+                fi
+                IFS=, read -r id name <<< "$line"
+                id=${id#\"}
+                id=${id%\"}
+                name=${name#\"}
+                name=${name%\"}
+                SA_ID="$id"
+                SA_USERNAME="$name"
+                break
+              done < <($KCADM get "clients/$KIE_CLIENT_UUID/service-account-user" -r "$REALM" \
+                --fields id,username --format csv)
+              if [ -z "$SA_ID" ] || [ -z "$SA_USERNAME" ]; then
+                echo "❌ Unable to resolve service account user for $KIE_SERVER_SERVICE_CLIENT_ID"
+                exit 1
+              fi
+
+              for role in $ROLE_LIST; do
+                if $KCADM get "roles/$role" -r "$REALM" >/dev/null 2>&1; then
+                  echo "✅ Realm role exists: $role"
+                else
+                  echo "Creating realm role: $role"
+                  $KCADM create roles -r "$REALM" -s "name=$role"
+                fi
+              done
+
+              for role in $ROLE_LIST; do
+                if $KCADM add-roles -r "$REALM" --uusername "$SA_USERNAME" --rolename "$role" >/dev/null 2>&1; then
+                  echo "✅ Assigned role $role to service account $SA_USERNAME"
+                else
+                  echo "Role $role already assigned to service account $SA_USERNAME"
+                fi
+              done
+          volumeMounts:
+            - { name: keycloak-admin-env, mountPath: /shared }
 
 # =========================
 # Optional OIDC (disabled by default) – shared for Workbench/KIE Server
@@ -370,30 +645,136 @@ metadata:
   namespace: drools
 data:
   enable-oidc.cli: |
-    embed-server --std-out=echo
-    batch
-    /subsystem=elytron-oidc-client:add()
-    /subsystem=elytron-oidc-client/secure-deployment=business-central.war:add(
-      client-id="${env.OIDC_CLIENT_ID}",
-      provider-url="${env.OIDC_ISSUER_URL}",
-      confidential="${env.OIDC_CONFIDENTIAL:false}",
-      principal-attribute=preferred_username,
-      ssl-required=EXTERNAL,
-      bearer-only=false,
-      enable-basic-auth=false
-    )
-    if (outcome != success) of /subsystem=elytron-oidc-client/secure-deployment=business-central.war/credential=secret:add(secret="${env.OIDC_CLIENT_SECRET:}")
-    run-batch
+    embed-server --std-out=echo --server-config=${env.WILDFLY_SERVER_CONFIG:standalone.xml}
+    # reloader-bump: 2026-01-14
+    if (outcome != success) of /extension=org.keycloak.keycloak-adapter-subsystem:read-resource()
+      /extension=org.keycloak.keycloak-adapter-subsystem:add()
+    end-if
+    if (outcome != success) of /subsystem=keycloak:read-resource()
+      /subsystem=keycloak:add()
+    end-if
+    if (outcome != success) of /subsystem=keycloak/secure-deployment=business-central.war:read-resource()
+      /subsystem=keycloak/secure-deployment=business-central.war:add(realm="${env.OIDC_REALM}",auth-server-url="${env.OIDC_AUTH_URL}",ssl-required=EXTERNAL,resource="${env.OIDC_CLIENT_ID}",public-client=false,bearer-only=${env.OIDC_BEARER_ONLY:false},principal-attribute=preferred_username)
+    end-if
+    if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-resource()
+      /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=use-resource-role-mappings,value=false)
+    end-if
+    if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-attribute(name=verify-token-audience)
+      /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=verify-token-audience,value=false)
+    end-if
+    if (outcome != success) of /subsystem=keycloak/secure-deployment=business-central.war/credential=secret:read-resource()
+      /subsystem=keycloak/secure-deployment=business-central.war/credential=secret:add(value="${env.OIDC_CLIENT_SECRET:}")
+    end-if
+    if (outcome != success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
+      /subsystem=keycloak/secure-deployment=kie-server.war:add(realm="${env.OIDC_KIE_SERVER_REALM:${env.OIDC_REALM}}",auth-server-url="${env.OIDC_KIE_SERVER_AUTH_URL:${env.OIDC_AUTH_URL}}",ssl-required=EXTERNAL,resource="${env.OIDC_KIE_SERVER_CLIENT_ID}",public-client=false,bearer-only=${env.OIDC_KIE_SERVER_BEARER_ONLY:true},principal-attribute=preferred_username)
+    end-if
+    if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
+      /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=use-resource-role-mappings,value=false)
+    end-if
+    if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-attribute(name=verify-token-audience)
+      /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=verify-token-audience,value=false)
+    end-if
+    if (outcome != success) of /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:read-resource()
+      /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:add(value="${env.OIDC_KIE_SERVER_CLIENT_SECRET:${env.OIDC_CLIENT_SECRET:}}")
+    end-if
+    if (outcome != success) of /subsystem=elytron/service-loader-http-server-mechanism-factory=keycloak:read-resource()
+      /subsystem=elytron/service-loader-http-server-mechanism-factory=keycloak:add(module=org.keycloak.keycloak-wildfly-elytron-oidc-adapter)
+    end-if
+    if (outcome != success) of /subsystem=elytron/aggregate-http-server-mechanism-factory=global-keycloak:read-resource()
+      /subsystem=elytron/aggregate-http-server-mechanism-factory=global-keycloak:add(http-server-mechanism-factories=[global,keycloak])
+    end-if
+    if (outcome != success) of /subsystem=elytron/http-authentication-factory=keycloak-http-authentication:read-resource()
+      /subsystem=elytron/http-authentication-factory=keycloak-http-authentication:add(http-server-mechanism-factory=global-keycloak,security-domain=ApplicationDomain,mechanism-configurations=[{mechanism-name=KEYCLOAK},{mechanism-name=FORM,mechanism-realm=Application Realm},{mechanism-name=BASIC,mechanism-realm=Application Realm}])
+    end-if
+    # Map Keycloak roles into Elytron using the standard "roles" attribute
+    if (outcome != success) of /subsystem=elytron/simple-role-decoder=kc-roles:read-resource()
+      /subsystem=elytron/simple-role-decoder=kc-roles:add(attribute=roles)
+    end-if
+    if (outcome == success) of /subsystem=elytron/security-domain=ApplicationDomain/realm=KieRealm:read-resource()
+      /subsystem=elytron/security-domain=ApplicationDomain/realm=KieRealm:write-attribute(name=role-decoder,value=kc-roles)
+    end-if
+    if (outcome == success) of /subsystem=undertow/application-security-domain=other:read-resource()
+      batch
+      /subsystem=undertow/application-security-domain=other:undefine-attribute(name=security-domain)
+      /subsystem=undertow/application-security-domain=other:write-attribute(name=http-authentication-factory,value=keycloak-http-authentication)
+      run-batch
+    end-if
+    if (outcome == success) of /subsystem=undertow/application-security-domain=default:read-resource()
+      batch
+      /subsystem=undertow/application-security-domain=default:undefine-attribute(name=security-domain)
+      /subsystem=undertow/application-security-domain=default:write-attribute(name=http-authentication-factory,value=keycloak-http-authentication)
+      run-batch
+    end-if
+    if (outcome == success) of /subsystem=undertow/server=default-server/http-listener=default:read-resource()
+      /subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=proxy-address-forwarding,value=true)
+    end-if
+    # Add request-dump filter for troubleshooting OIDC callbacks (logs headers/cookies in server.log)
+    if (outcome != success) of /subsystem=undertow/configuration=filter/custom-filter=oidc-dumper:read-resource()
+      /subsystem=undertow/configuration=filter/custom-filter=oidc-dumper:add(class-name=io.undertow.server.handlers.RequestDumpingHandler,module=io.undertow.core)
+    end-if
+    if (outcome != success) of /subsystem=undertow/server=default-server/host=default-host/filter-ref=oidc-dumper:read-resource()
+      /subsystem=undertow/server=default-server/host=default-host/filter-ref=oidc-dumper:add()
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak:read-resource()
+      /subsystem=logging/logger=org.keycloak:add(level=TRACE)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.authorization:read-resource()
+      /subsystem=logging/logger=org.keycloak.authorization:add(level=TRACE)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters:add(level=DEBUG)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.OAuthRequestAuthenticator:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.OAuthRequestAuthenticator:add(level=DEBUG)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.rotation:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.rotation:add(level=DEBUG)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.authentication:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.authentication:add(level=DEBUG)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.servlet:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.servlet:add(level=DEBUG)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.RequestAuthenticator:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.RequestAuthenticator:add(level=TRACE)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.OAuthRequestAuthenticator:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.OAuthRequestAuthenticator:add(level=TRACE)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.BearerTokenRequestAuthenticator:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.BearerTokenRequestAuthenticator:add(level=TRACE)
+    end-if
     stop-embedded-server
   configure-oidc.sh: |
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ -f /vault-secrets/oidc-env.sh ]; then
+      # shellcheck disable=SC1091
+      . /vault-secrets/oidc-env.sh
+    fi
     if [ "${OIDC_ENABLE:-false}" != "true" ]; then
       echo "OIDC disabled; skipping CLI configuration."
       exit 0
     fi
+    MODULE_XML_ADDONS="/opt/jboss/wildfly/modules/system/add-ons/keycloak/org/keycloak/keycloak-adapter-subsystem/main/module.xml"
+    MODULE_XML_BASE="/opt/jboss/wildfly/modules/system/layers/base/org/keycloak/keycloak-adapter-subsystem/main/module.xml"
+    MODULE_XML=""
+    if [ -f "$MODULE_XML_ADDONS" ]; then
+      MODULE_XML="$MODULE_XML_ADDONS"
+    elif [ -f "$MODULE_XML_BASE" ]; then
+      MODULE_XML="$MODULE_XML_BASE"
+    fi
+    if [ -z "$MODULE_XML" ]; then
+      echo "❌ OIDC module missing at $MODULE_XML_ADDONS or $MODULE_XML_BASE; Keycloak adapter install failed."
+      exit 1
+    fi
     echo "Enabling OIDC via CLI..."
     /opt/jboss/wildfly/bin/jboss-cli.sh --file=/oidc/enable-oidc.cli
+    # Ensure Elytron maps Keycloak roles via the "roles" attribute
+    if grep -q 'realm name="KieRealm" role-decoder="from-roles-attribute"' /opt/jboss/wildfly/standalone/configuration/standalone.xml; then
+      sed -i 's/realm name="KieRealm" role-decoder="from-roles-attribute"/realm name="KieRealm" role-decoder="kc-roles"/' /opt/jboss/wildfly/standalone/configuration/standalone.xml
+    fi
     echo "OIDC configuration applied."
 
 # =========================
@@ -454,6 +835,12 @@ data:
     set -euo pipefail
     echo "📄 Copying standalone configuration into /config..."
     cp -a /opt/jboss/wildfly/standalone/configuration/* /config/
+    if [ -f /shared/application-users.properties ]; then
+      cp -a /shared/application-users.properties /config/application-users.properties
+    fi
+    if [ -f /shared/application-roles.properties ]; then
+      cp -a /shared/application-roles.properties /config/application-roles.properties
+    fi
     echo "🛠️  Applying redirect CLI (Workbench)..."
     /opt/jboss/wildfly/bin/jboss-cli.sh --file=/redirect/enable-redirect.cli
     echo "📦 Persisting modified standalone.xml into /config..."
@@ -503,7 +890,7 @@ metadata:
   namespace: drools
 data:
   enable-redirect.cli: |
-    embed-server --std-out=echo --server-config=standalone-full.xml
+    embed-server --std-out=echo --server-config=standalone-full-kie-server.xml
     batch
     /subsystem=undertow/configuration=filter/expression-filter=redirect-root:add(expression="path('/') -> redirect('/kie-server/services/rest/server')")
     /subsystem=undertow/server=default-server/host=default-host/filter-ref=redirect-root:add
@@ -516,8 +903,8 @@ data:
     cp -a /opt/jboss/wildfly/standalone/configuration/* /config/
     echo "🛠️  Applying redirect CLI (KIE Server)..."
     /opt/jboss/wildfly/bin/jboss-cli.sh --file=/redirect/enable-redirect.cli
-    echo "📦 Persisting modified standalone-full.xml into /config..."
-    cp -a /opt/jboss/wildfly/standalone/configuration/standalone-full.xml /config/standalone-full.xml
+    echo "📦 Persisting modified standalone-full-kie-server.xml into /config..."
+    cp -a /opt/jboss/wildfly/standalone/configuration/standalone-full-kie-server.xml /config/standalone-full-kie-server.xml
     echo "✅ Redirect configured"
 
 # =========================
@@ -530,8 +917,12 @@ metadata:
   name: kie-workbench
   namespace: drools
   labels: { app: kie-workbench }
+  annotations:
+    reloader.stakater.com/auto: "true"
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels: { app: kie-workbench }
   template:
@@ -539,6 +930,8 @@ spec:
       labels: { app: kie-workbench }
     spec:
       serviceAccountName: drools-workbench
+      securityContext:
+        fsGroup: 1000
       volumes:
         - name: workbench-config
           emptyDir: {}
@@ -558,6 +951,10 @@ spec:
             items:
               - { key: enable-oidc.cli,    path: enable-oidc.cli,    mode: 0444 }
               - { key: configure-oidc.sh,  path: configure-oidc.sh,  mode: 0555 }
+        - name: wildfly-modules
+          emptyDir: {}
+        - name: wildfly-modules
+          emptyDir: {}
 
       initContainers:
         - name: wait-for-config-job
@@ -574,6 +971,90 @@ spec:
                 [ "$SUCC" -ge 1 ] && break
                 sleep 5
               done
+        - name: vault-kie-users
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+              apk add --no-cache jq
+              VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
+                role=drools \
+                jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token))
+              export VAULT_TOKEN
+
+              OIDC_ENV_FILE="/shared/oidc-env.sh"
+              : > "$OIDC_ENV_FILE"
+              # Base OIDC settings (constant)
+              echo 'export OIDC_AUTH_URL="https://auth.suncoast.systems"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_REALM="internal"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_CONFIDENTIAL="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_AUTH_URL="https://auth.suncoast.systems"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_REALM="internal"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_CONFIDENTIAL="false"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_BEARER_ONLY="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
+
+              OIDC_ID_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-workbench 2>/dev/null || true)"
+              OIDC_ID="$(printf '%s' "$OIDC_ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "${OIDC_ID:-}" ]; then
+                echo "❌ OIDC client id not found at secret/keycloak-client-id-drools-workbench"
+                exit 1
+              fi
+              echo "✅ OIDC client id loaded for drools-workbench"
+              echo "export OIDC_CLIENT_ID=\"$OIDC_ID\"" >> "$OIDC_ENV_FILE"
+
+              OIDC_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-workbench 2>/dev/null || true)"
+              OIDC_SECRET="$(printf '%s' "$OIDC_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "${OIDC_SECRET:-}" ]; then
+                echo "❌ OIDC client secret not found at secret/keycloak-client-secret-drools-workbench"
+                exit 1
+              fi
+              echo "export OIDC_CLIENT_SECRET=\"$OIDC_SECRET\"" >> "$OIDC_ENV_FILE"
+              echo "✅ OIDC client secret loaded for drools-workbench"
+
+              KIE_OIDC_ID_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-kie-server 2>/dev/null || true)"
+              KIE_OIDC_ID="$(printf '%s' "$KIE_OIDC_ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "${KIE_OIDC_ID:-}" ]; then
+                echo "❌ OIDC client id not found at secret/keycloak-client-id-drools-kie-server"
+                exit 1
+              fi
+              echo "✅ OIDC client id loaded for drools-kie-server"
+              echo "export OIDC_KIE_SERVER_CLIENT_ID=\"$KIE_OIDC_ID\"" >> "$OIDC_ENV_FILE"
+
+              KIE_OIDC_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server 2>/dev/null || true)"
+              KIE_OIDC_SECRET="$(printf '%s' "$KIE_OIDC_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "${KIE_OIDC_SECRET:-}" ]; then
+                echo "❌ OIDC client secret not found at secret/keycloak-client-secret-drools-kie-server"
+                exit 1
+              fi
+              echo "export OIDC_KIE_SERVER_CLIENT_SECRET=\"$KIE_OIDC_SECRET\"" >> "$OIDC_ENV_FILE"
+              echo "✅ OIDC client secret loaded for drools-kie-server"
+
+              KIE_ENV_FILE="/shared/kie-users-env.sh"
+              : > "$KIE_ENV_FILE"
+              ADMIN_JSON="$(vault kv get -format=json secret/drools/admin 2>/dev/null || true)"
+              ADMIN_USER="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.username // empty')"
+              ADMIN_PASS="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.password // empty')"
+              KIE_USER_JSON="$(vault kv get -format=json secret/drools/kie-user 2>/dev/null || true)"
+              KIE_USER="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.username // empty')"
+              KIE_PASS="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.password // empty')"
+              if [ -z "${ADMIN_USER:-}" ] || [ -z "${ADMIN_PASS:-}" ] || [ -z "${KIE_USER:-}" ] || [ -z "${KIE_PASS:-}" ]; then
+                echo "Missing drools admin/kie-user creds in Vault"
+                exit 1
+              fi
+              {
+                echo "export KIE_SERVER_CONTROLLER_USER=\"$ADMIN_USER\""
+                echo "export KIE_SERVER_CONTROLLER_PWD=\"$ADMIN_PASS\""
+                echo "export KIE_SERVER_USER=\"$KIE_USER\""
+                echo "export KIE_SERVER_PWD=\"$KIE_PASS\""
+              } > "$KIE_ENV_FILE"
+          volumeMounts:
+            - name: vault-secrets
+              mountPath: /shared
         - name: vault-db-creds
           image: hashicorp/vault:1.15.4
           command: ["/bin/sh", "-c"]
@@ -599,6 +1080,78 @@ spec:
               echo "export KIE_CONNECTION_PASSWORD=\"$DB_PASSWORD\"" >> /shared/db-env.sh
               
               echo "✅ Database credentials retrieved: user=$DB_USERNAME"
+
+              OIDC_ENV_FILE="/shared/oidc-env.sh"
+              : > "$OIDC_ENV_FILE"
+              # Base OIDC settings (constant)
+              echo 'export OIDC_AUTH_URL="https://auth.suncoast.systems"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_REALM="internal"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_CONFIDENTIAL="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_AUTH_URL="https://auth.suncoast.systems"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_REALM="internal"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_CONFIDENTIAL="false"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_BEARER_ONLY="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
+
+              OIDC_ID_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-workbench 2>/dev/null || true)"
+              OIDC_ID="$(printf '%s' "$OIDC_ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "${OIDC_ID:-}" ]; then
+                echo "❌ OIDC client id not found at secret/keycloak-client-id-drools-workbench"
+                exit 1
+              fi
+              echo "✅ OIDC client id loaded for drools-workbench"
+              echo "export OIDC_CLIENT_ID=\"$OIDC_ID\"" >> "$OIDC_ENV_FILE"
+
+              OIDC_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-workbench 2>/dev/null || true)"
+              OIDC_SECRET="$(printf '%s' "$OIDC_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "${OIDC_SECRET:-}" ]; then
+                echo "❌ OIDC client secret not found at secret/keycloak-client-secret-drools-workbench"
+                exit 1
+              fi
+              echo "export OIDC_CLIENT_SECRET=\"$OIDC_SECRET\"" >> "$OIDC_ENV_FILE"
+              echo "✅ OIDC client secret loaded for drools-workbench"
+
+              KIE_OIDC_ID_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-kie-server 2>/dev/null || true)"
+              KIE_OIDC_ID="$(printf '%s' "$KIE_OIDC_ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "${KIE_OIDC_ID:-}" ]; then
+                echo "❌ OIDC client id not found at secret/keycloak-client-id-drools-kie-server"
+                exit 1
+              fi
+              echo "✅ OIDC client id loaded for drools-kie-server"
+              echo "export OIDC_KIE_SERVER_CLIENT_ID=\"$KIE_OIDC_ID\"" >> "$OIDC_ENV_FILE"
+
+              KIE_OIDC_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server 2>/dev/null || true)"
+              KIE_OIDC_SECRET="$(printf '%s' "$KIE_OIDC_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "${KIE_OIDC_SECRET:-}" ]; then
+                echo "❌ OIDC client secret not found at secret/keycloak-client-secret-drools-kie-server"
+                exit 1
+              fi
+              echo "export OIDC_KIE_SERVER_CLIENT_SECRET=\"$KIE_OIDC_SECRET\"" >> "$OIDC_ENV_FILE"
+              echo "✅ OIDC client secret loaded for drools-kie-server"
+
+              # Seed Workbench local users for Basic auth (controller sync)
+              ADMIN_JSON="$(vault kv get -format=json secret/drools/admin 2>/dev/null || true)"
+              ADMIN_USER="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.username // empty')"
+              ADMIN_PASS="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.password // empty')"
+              KIE_USER_JSON="$(vault kv get -format=json secret/drools/kie-user 2>/dev/null || true)"
+              KIE_USER="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.username // empty')"
+              KIE_PASS="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.password // empty')"
+              if [ -z "${ADMIN_USER:-}" ] || [ -z "${ADMIN_PASS:-}" ] || [ -z "${KIE_USER:-}" ] || [ -z "${KIE_PASS:-}" ]; then
+                echo "❌ Missing drools admin/kie-user creds in Vault"
+                exit 1
+              fi
+              REALM="ApplicationRealm"
+              ADMIN_HASH="$(printf '%s:%s:%s' "$ADMIN_USER" "$REALM" "$ADMIN_PASS" | md5sum | awk '{print $1}')"
+              KIE_HASH="$(printf '%s:%s:%s' "$KIE_USER" "$REALM" "$KIE_PASS" | md5sum | awk '{print $1}')"
+              USERS_FILE="/shared/application-users.properties"
+              ROLES_FILE="/shared/application-roles.properties"
+              printf '%s=%s\n' "$ADMIN_USER" "$ADMIN_HASH" > "$USERS_FILE"
+              printf '%s=%s\n' "$KIE_USER" "$KIE_HASH" >> "$USERS_FILE"
+              printf '%s=%s\n' "$ADMIN_USER" "admin,rest-all,developer,analyst,manager,user,kie-server" > "$ROLES_FILE"
+              printf '%s=%s\n' "$KIE_USER" "kie-server,rest-all" >> "$ROLES_FILE"
+              echo "✅ Workbench application users/roles seeded"
           volumeMounts:
             - name: vault-secrets
               mountPath: /shared
@@ -609,20 +1162,64 @@ spec:
           volumeMounts:
             - { name: workbench-config, mountPath: /config }
             - { name: redirect-cli,     mountPath: /redirect }
+            - { name: vault-secrets,    mountPath: /shared }
+        - name: copy-wildfly-modules
+          image: quay.io/kiegroup/business-central-workbench-showcase:latest
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+              cp -R /opt/jboss/wildfly/modules/. /target/
+              echo "✅ WildFly modules copied"
+          volumeMounts:
+            - { name: wildfly-modules, mountPath: /target }
+        - name: install-keycloak-adapter
+          image: alpine:3.20
+          command: ["/bin/sh","-c"]
+          env:
+            - name: KEYCLOAK_ADAPTER_URL
+              value: "https://repo1.maven.org/maven2/org/keycloak/keycloak-wildfly-adapter-dist/24.0.5/keycloak-wildfly-adapter-dist-24.0.5.zip"
+          args:
+            - |
+              set -euo pipefail
+              apk add --no-cache curl unzip
+              WORK="/tmp/keycloak"
+              mkdir -p "$WORK"
+              echo "⬇️  Downloading Keycloak WildFly adapter..."
+              curl -fsSL "$KEYCLOAK_ADAPTER_URL" -o "$WORK/adapter.zip"
+              unzip -q "$WORK/adapter.zip" -d "$WORK"
+              ADAPTER_DIR="$(find "$WORK" -maxdepth 1 -type d -name "keycloak-wildfly-adapter-dist*" | head -n1)"
+              if [ -z "$ADAPTER_DIR" ] || [ ! -d "$ADAPTER_DIR/modules" ]; then
+                if [ -d "$WORK/modules" ]; then
+                  ADAPTER_DIR="$WORK"
+                else
+                  echo "❌ Keycloak adapter modules not found in distribution."
+                  find "$WORK" -maxdepth 2 -type d -name "modules" -print || true
+                  exit 1
+                fi
+              fi
+              cp -R "$ADAPTER_DIR/modules/." /target/
+              if [ -d /target/system/add-ons/keycloak/org/keycloak ]; then
+                mkdir -p /target/system/layers/base/org
+                cp -R /target/system/add-ons/keycloak/org/keycloak /target/system/layers/base/org/
+              fi
+              echo "✅ Keycloak adapter modules installed"
+          volumeMounts:
+            - { name: wildfly-modules, mountPath: /target }
         - name: configure-oidc
           image: quay.io/kiegroup/business-central-workbench-showcase:latest
           command: ["/bin/sh","-c"]
-          args: ["sh /oidc/configure-oidc.sh"]
+          args:
+            - |
+              set -e
+              sh /oidc/configure-oidc.sh
           env:
-            - { name: OIDC_ENABLE,          value: "false" }
-            - { name: OIDC_REALM,           value: "" }
-            - { name: OIDC_ISSUER_URL,      value: "" }
-            - { name: OIDC_CLIENT_ID,       value: "" }
-            - { name: OIDC_CLIENT_SECRET,   value: "" }
-            - { name: OIDC_REDIRECT_URL,    value: "" }
-            - { name: OIDC_POST_LOGOUT_URL, value: "" }
+            - { name: OIDC_ENABLE, value: "true" }
           volumeMounts:
+            - { name: workbench-config, mountPath: /opt/jboss/wildfly/standalone/configuration }
             - { name: wildfly-oidc, mountPath: /oidc }
+            - { name: vault-secrets, mountPath: /vault-secrets }
+            - { name: wildfly-modules, mountPath: /opt/jboss/wildfly/modules }
         - name: setup-redirect-fallback
           image: quay.io/kiegroup/business-central-workbench-showcase:latest
           command: ["/bin/sh", "-c"]
@@ -652,6 +1249,11 @@ spec:
                 echo "❌ Database credentials not found!"
                 exit 1
               fi
+
+              if [ -f /vault-secrets/oidc-env.sh ]; then
+                # shellcheck disable=SC1091
+                . /vault-secrets/oidc-env.sh
+              fi
               
               echo "🚀 Starting KIE Workbench..."
               exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0
@@ -667,24 +1269,48 @@ spec:
                 -Djboss.bind.address=0.0.0.0
                 -Djboss.bind.address.management=0.0.0.0
                 -Dorg.kie.server.location=https://workbench-drools.teleport.app.suncoast.systems/business-central/
+                -Djboss.http.proxy.scheme=https
+                -Djboss.http.proxy.port=443
+                -Djboss.http.proxy.proxyName=workbench-drools.teleport.app.suncoast.systems
+                -Dorg.jboss.as.logging.per-deployment=false
+                -Dorg.kie.security.useSSO=true
+                -Dorg.uberfire.ext.security.management.keycloak.enabled=true
+                -Dorg.uberfire.ext.security.management.keycloak.authServer=https://auth.suncoast.systems
+                -Dorg.uberfire.ext.security.management.keycloak.use-resource-role-mappings=false
+            - name: JAVA_OPTS_APPEND
+              value: >-
+                -Djboss.logging.level.org.keycloak.adapters=DEBUG
+                -Djboss.logging.level.org.keycloak.adapters.OAuthRequestAuthenticator=DEBUG
+                -Djboss.logging.level.org.keycloak=DEBUG
             - name: KIE_CONNECTION_URL
               value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/drools?currentSchema=drools"
             - name: KIE_CONNECTION_DRIVER_CLASS
               value: "org.postgresql.Driver"
             - name: PROXY_ADDRESS_FORWARDING
               value: "true"
+            - name: KEYCLOAK_FRONTEND_URL
+              value: "https://auth.suncoast.systems"
+            - name: KEYCLOAK_REDIRECT_HOSTNAME
+              value: "workbench-drools.teleport.app.suncoast.systems"
+            - name: KEYCLOAK_REDIRECT_PORT
+              value: "443"
+            - name: KEYCLOAK_REDIRECT_PATH
+              value: "/business-central"
+            - name: KEYCLOAK_REDIRECT_PATH_KIE_SERVER
+              value: "/business-central/rest/controller/server/kie-server"
           volumeMounts:
             - { name: workbench-config,  mountPath: /opt/jboss/wildfly/standalone/configuration }
             - { name: welcome-content,   mountPath: /opt/jboss/wildfly/welcome-content }
             - { name: vault-secrets,     mountPath: /vault-secrets }
+            - { name: wildfly-modules,   mountPath: /opt/jboss/wildfly/modules }
           readinessProbe:
-            httpGet: { path: /business-central/, port: 8080 }
+            tcpSocket: { port: 8080 }
             initialDelaySeconds: 180
             periodSeconds: 30
             timeoutSeconds: 30
             failureThreshold: 10
           livenessProbe:
-            httpGet: { path: /business-central/, port: 8080 }
+            tcpSocket: { port: 8080 }
             initialDelaySeconds: 300
             periodSeconds: 60
             timeoutSeconds: 30
@@ -725,6 +1351,8 @@ metadata:
   name: kie-server
   namespace: drools
   labels: { app: kie-server }
+  annotations:
+    reloader.stakater.com/auto: "true"
 spec:
   replicas: 2
   selector:
@@ -744,6 +1372,8 @@ spec:
               - { key: enable-redirect.cli, path: enable-redirect.cli, mode: 0444 }
               - { key: run-cli.sh,        path: run-cli.sh,        mode: 0555 }
         - name: welcome-content
+          emptyDir: {}
+        - name: vault-secrets
           emptyDir: {}
         - name: wildfly-oidc
           configMap:
@@ -773,20 +1403,64 @@ spec:
           volumeMounts:
             - { name: kieserver-config, mountPath: /config }
             - { name: redirect-cli,     mountPath: /redirect }
+        - name: copy-wildfly-modules
+          image: quay.io/kiegroup/kie-server-showcase:latest
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+              cp -R /opt/jboss/wildfly/modules/. /target/
+              echo "✅ WildFly modules copied"
+          volumeMounts:
+            - { name: wildfly-modules, mountPath: /target }
+        - name: install-keycloak-adapter
+          image: alpine:3.20
+          command: ["/bin/sh","-c"]
+          env:
+            - name: KEYCLOAK_ADAPTER_URL
+              value: "https://repo1.maven.org/maven2/org/keycloak/keycloak-wildfly-adapter-dist/24.0.5/keycloak-wildfly-adapter-dist-24.0.5.zip"
+          args:
+            - |
+              set -euo pipefail
+              apk add --no-cache curl unzip
+              WORK="/tmp/keycloak"
+              mkdir -p "$WORK"
+              echo "⬇️  Downloading Keycloak WildFly adapter..."
+              curl -fsSL "$KEYCLOAK_ADAPTER_URL" -o "$WORK/adapter.zip"
+              unzip -q "$WORK/adapter.zip" -d "$WORK"
+              ADAPTER_DIR="$(find "$WORK" -maxdepth 1 -type d -name "keycloak-wildfly-adapter-dist*" | head -n1)"
+              if [ -z "$ADAPTER_DIR" ] || [ ! -d "$ADAPTER_DIR/modules" ]; then
+                if [ -d "$WORK/modules" ]; then
+                  ADAPTER_DIR="$WORK"
+                else
+                  echo "❌ Keycloak adapter modules not found in distribution."
+                  find "$WORK" -maxdepth 2 -type d -name "modules" -print || true
+                  exit 1
+                fi
+              fi
+              cp -R "$ADAPTER_DIR/modules/." /target/
+              if [ -d /target/system/add-ons/keycloak/org/keycloak ]; then
+                mkdir -p /target/system/layers/base/org
+                cp -R /target/system/add-ons/keycloak/org/keycloak /target/system/layers/base/org/
+              fi
+              echo "✅ Keycloak adapter modules installed"
+          volumeMounts:
+            - { name: wildfly-modules, mountPath: /target }
         - name: configure-oidc
           image: quay.io/kiegroup/kie-server-showcase:latest
           command: ["/bin/sh","-c"]
-          args: ["sh /oidc/configure-oidc.sh"]
+          args:
+            - |
+              set -e
+              sh /oidc/configure-oidc.sh
           env:
-            - { name: OIDC_ENABLE,          value: "false" }
-            - { name: OIDC_REALM,           value: "" }
-            - { name: OIDC_ISSUER_URL,      value: "" }
-            - { name: OIDC_CLIENT_ID,       value: "" }
-            - { name: OIDC_CLIENT_SECRET,   value: "" }
-            - { name: OIDC_REDIRECT_URL,    value: "" }
-            - { name: OIDC_POST_LOGOUT_URL, value: "" }
+            - { name: OIDC_ENABLE,           value: "true" }
+            - { name: WILDFLY_SERVER_CONFIG, value: "standalone-full-kie-server.xml" }
           volumeMounts:
+            - { name: kieserver-config, mountPath: /opt/jboss/wildfly/standalone/configuration }
             - { name: wildfly-oidc, mountPath: /oidc }
+            - { name: vault-secrets, mountPath: /vault-secrets }
+            - { name: wildfly-modules, mountPath: /opt/jboss/wildfly/modules }
         - name: setup-redirect-fallback
           image: quay.io/kiegroup/kie-server-showcase:latest
           command: ["/bin/sh", "-c"]
@@ -802,17 +1476,38 @@ spec:
       containers:
         - name: kie-server
           image: quay.io/kiegroup/kie-server-showcase:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              if [ -f /vault-secrets/kie-users-env.sh ]; then
+                # shellcheck disable=SC1091
+                . /vault-secrets/kie-users-env.sh
+              else
+                echo "KIE server credentials file not found at /vault-secrets/kie-users-env.sh"
+                exit 1
+              fi
+              exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 \
+                -Dorg.kie.server.id="${KIE_SERVER_ID}" \
+                -Dorg.kie.server.user="${KIE_SERVER_USER}" \
+                -Dorg.kie.server.pwd="${KIE_SERVER_PWD}" \
+                -Dorg.kie.server.location="${KIE_SERVER_LOCATION}" \
+                -Dorg.kie.server.controller="${KIE_SERVER_CONTROLLER}" \
+                -Dorg.kie.server.controller.user="${KIE_SERVER_CONTROLLER_USER}" \
+                -Dorg.kie.server.controller.pwd="${KIE_SERVER_CONTROLLER_PWD}" \
+                -c standalone-full-kie-server.xml
           ports:
             - { containerPort: 8080 }
           env:
             - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0" }
             - { name: KIE_SERVER_ID,       value: "kie-server" }
-            - { name: KIE_SERVER_LOCATION, value: "https://kie-server-drools.teleport.app.suncoast.systems/services/rest/server" }
-            - { name: KIE_SERVER_CONTROLLER, value: "https://workbench-drools.teleport.app.suncoast.systems/business-central/rest/controller" }
-            - { name: KIE_MAVEN_REPO,     value: "https://workbench-drools.teleport.app.suncoast.systems/business-central/maven2" }
+            - { name: KIE_SERVER_LOCATION, value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server" }
+            - { name: KIE_SERVER_CONTROLLER, value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller" }
+            - { name: KIE_MAVEN_REPO,     value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/maven2" }
           volumeMounts:
             - { name: kieserver-config,  mountPath: /opt/jboss/wildfly/standalone/configuration }
             - { name: welcome-content,   mountPath: /opt/jboss/wildfly/welcome-content }
+            - { name: vault-secrets,     mountPath: /vault-secrets }
+            - { name: wildfly-modules,   mountPath: /opt/jboss/wildfly/modules }
           readinessProbe:
             tcpSocket: { port: 8080 }
             initialDelaySeconds: 120
@@ -832,6 +1527,43 @@ kind: Service
 metadata:
   name: kie-server
   namespace: drools
+  annotations:
+    gravitee.io/expose: "true"
+    gravitee.io/context-path: "/kie-server"
+    gravitee.io/auth-required: "jwt"
+    gravitee.io/approval-required: "admin"
+
+    gravitee.io/description: "Drools KIE Server API"
+    gravitee.io/version: "latest"
+    gravitee.io/tags: "drools,rules,kie"
+    gravitee.io/definition-name: "drools-kie-server"
+    gravitee.io/definition-summary: "Drools KIE Server API"
+    gravitee.io/definition-description: "Rules execution API"
+    gravitee.io/definition-version: "latest"
+    gravitee.io/definition-type: "HTTP"
+    gravitee.io/definition-context-path: "/kie-server"
+    gravitee.io/definition-visibility: "PUBLIC"
+    gravitee.io/definition-state: "STARTED"
+    gravitee.io/definition-lifecycle-state: "PUBLISHED"
+
+    gravitee.io/definition-listener-host: "kie-server.drools.svc.cluster.local"
+    gravitee.io/definition-listener-port: "8080"
+
+    gravitee.io/definition-groups: "rules"
+    gravitee.io/definition-tags: "drools,kie,rules"
+    gravitee.io/definition-labels: "internal,rules"
+    gravitee.io/definition-categories: "rules"
+    gravitee.io/definition-path-mappings: "/kie-server/*"
+
+    gravitee.io/definition-metadata: '{"owner":"drools","system":"rules-engine"}'
+    gravitee.io/definition-properties: '{"tier":"internal","region":"cluster","token_exchange_url":"https://auth.suncoast.systems/realms/internal/protocol/openid-connect/token","token_exchange_client_id":"<path:secret/data/keycloak-client-id-drools-kie-server-service#value>","token_exchange_client_secret":"<path:secret/data/keycloak-client-secret-drools-kie-server-service#value>"}'
+    gravitee.io/definition-resources: '[]'
+    gravitee.io/definition-endpoint-groups: '[{"name":"default","type":"http-proxy","sharedConfiguration":{"http":{"version":"HTTP_1_1","connectTimeout":30000,"readTimeout":300000,"idleTimeout":300000,"keepAlive":true,"keepAliveTimeout":30000,"pipelining":false,"useCompression":false,"propagateClientAcceptEncoding":false,"followRedirects":false,"maxConcurrentConnections":20}},"services":{"healthCheck":{"enabled":true,"overrideConfiguration":true,"type":"http-health-check","configuration":{"schedule":"*/30 * * * * *","target":"/kie-server/services/rest/server","method":"GET","overrideEndpointPath":true,"headers":[],"assertion":"{#response.status == 200 || #response.status == 401 || #response.status == 403}","successThreshold":2,"failureThreshold":2}}},"endpoints":[{"name":"kie-server-http","type":"http-proxy","inheritConfiguration":true,"weight":1,"configuration":{"target":"http://kie-server.drools.svc.cluster.local:8080"},"secondary":false}]}]'
+    gravitee.io/definition-plans: '{"basic-internal":{"name":"Internal Basic","description":"Internal Workbench/controller access","security":{"type":"KEY_LESS"},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"{#request.headers[\"authorization\"]!=null?#request.headers[\"authorization\"][0].startsWith(\"Basic \"):(#request.headers[\"Authorization\"]!=null&&#request.headers[\"Authorization\"][0].startsWith(\"Basic \")))}"},"jwt-internal":{"name":"JWT Internal","description":"Keycloak internal realm JWT","security":{"type":"JWT","configuration":{"signature":"RSA_RS256","publicKeyResolver":"JWKS_URL","resolverParameter":"https://auth.suncoast.systems/realms/internal/protocol/openid-connect/certs","userClaim":"preferred_username"}},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"{#jwt != null && #jwt.claims[\"iss\"] == \"https://auth.suncoast.systems/realms/internal\"}"},"jwt-external":{"name":"JWT External","description":"Keycloak external realm JWT","security":{"type":"JWT","configuration":{"signature":"RSA_RS256","publicKeyResolver":"JWKS_URL","resolverParameter":"https://auth.suncoast.systems/realms/external/protocol/openid-connect/certs","userClaim":"preferred_username"}},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"{#jwt != null && #jwt.claims[\"iss\"] == \"https://auth.suncoast.systems/realms/external\"}"}}'
+    gravitee.io/definition-flows: '[{"name":"service-account","enabled":true,"request":[{"name":"mark-flow","policy":"transform-headers","enabled":true,"messageCondition":"{#request.headers[\"authorization\"]!=null?#request.headers[\"authorization\"][0].startsWith(\"Basic \"):(#request.headers[\"Authorization\"]!=null&&#request.headers[\"Authorization\"][0].startsWith(\"Basic \")))}","configuration":{"add":[{"name":"X-Policy-Matched","value":"service-account"}]}},{"name":"keycloak-service-token","policy":"policy-http-callout","enabled":true,"description":"Service account token for internal Basic callers","messageCondition":"{#request.headers[\"authorization\"]!=null?#request.headers[\"authorization\"][0].startsWith(\"Basic \"):(#request.headers[\"Authorization\"]!=null&&#request.headers[\"Authorization\"][0].startsWith(\"Basic \")))}","configuration":{"url":"{#properties[\"token_exchange_url\"]}","method":"POST","headers":[{"name":"Content-Type","value":"application/x-www-form-urlencoded"}],"body":"grant_type=client_credentials&client_id={#properties[\"token_exchange_client_id\"]}&client_secret={#properties[\"token_exchange_client_secret\"]}","exitOnError":true,"response":{"body":"service_token_response"}}},{"name":"strip-auth-header","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"service_token_response\"] != null}","configuration":{"remove":["Authorization","authorization"]}},{"name":"mark-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"service_token_response\"] != null}","configuration":{"add":[{"name":"X-Service-Token-Present","value":"true"}]}},{"name":"apply-service-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"service_token_response\"] != null}","configuration":{"add":[{"name":"Authorization","value":"Bearer {#jsonPath(#context.attributes[\"service_token_response\"], \"$.access_token\")}"}]}}]},{"name":"token-exchange","enabled":true,"request":[{"name":"mark-flow","policy":"transform-headers","enabled":true,"messageCondition":"{#request.headers[\"authorization\"]!=null?#request.headers[\"authorization\"][0].startsWith(\"Bearer \"):(#request.headers[\"Authorization\"]!=null&&#request.headers[\"Authorization\"][0].startsWith(\"Bearer \")))}","configuration":{"add":[{"name":"X-Policy-Matched","value":"token-exchange"}]}},{"name":"keycloak-token-exchange","policy":"policy-http-callout","enabled":true,"description":"Exchange token to internal realm","messageCondition":"{#request.headers[\"authorization\"]!=null?#request.headers[\"authorization\"][0].startsWith(\"Bearer \"):(#request.headers[\"Authorization\"]!=null&&#request.headers[\"Authorization\"][0].startsWith(\"Bearer \")))}","configuration":{"url":"{#properties[\"token_exchange_url\"]}","method":"POST","headers":[{"name":"Content-Type","value":"application/x-www-form-urlencoded"}],"body":"grant_type=urn:ietf:params:oauth:grant-type:token-exchange&client_id={#properties[\"token_exchange_client_id\"]}&client_secret={#properties[\"token_exchange_client_secret\"]}&subject_token={(#request.headers[\"authorization\"] != null ? #request.headers[\"authorization\"][0].substring(7) : #request.headers[\"Authorization\"][0].substring(7))}","exitOnError":true,"response":{"body":"token_exchange_response"}}},{"name":"strip-auth-header","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"token_exchange_response\"] != null}","configuration":{"remove":["Authorization","authorization"]}},{"name":"mark-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"token_exchange_response\"] != null}","configuration":{"add":[{"name":"X-Exchanged-Token-Present","value":"true"}]}},{"name":"apply-exchanged-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"token_exchange_response\"] != null}","configuration":{"add":[{"name":"Authorization","value":"Bearer {#jsonPath(#context.attributes[\"token_exchange_response\"], \"$.access_token\")}"}]}}]}]'
+    gravitee.io/definition-response-templates: '{}'
+    gravitee.io/definition-analytics: '{"enabled":true,"logging":null}'
+    gravitee.io/definition-entrypoints: '[]'
 spec:
   selector:
     app: kie-server
@@ -850,6 +1582,8 @@ metadata:
   namespace: drools
   labels:
     app: kogito-decision-service
+  annotations:
+    reloader.stakater.com/auto: "true"
 spec:
   replicas: 2
   selector:
@@ -890,7 +1624,7 @@ spec:
               subPath: welcome-content
           env:
             - { name: JAVA_OPTS, value: "-Xms512m -Xmx2048m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8" }
-            - { name: KIE_SERVER_LOCATION, value: "https://decisions-drools.teleport.app.suncoast.systems/kie-server/services/rest/server" }
+            - { name: KIE_SERVER_LOCATION, value: "http://kogito-decision-service.drools.svc.cluster.local:8080/kie-server/services/rest/server" }
             - { name: KIE_SERVER_USER, value: "kieserver" }
             - { name: KIE_SERVER_PWD,  value: "kieserver1!" }
             - { name: KIE_SERVER_CONTROLLER_USER, value: "admin" }
@@ -919,6 +1653,43 @@ kind: Service
 metadata:
   name: kogito-decision-service
   namespace: drools
+  annotations:
+    gravitee.io/expose: "true"
+    gravitee.io/context-path: "/decisions"
+    gravitee.io/auth-required: "jwt"
+    gravitee.io/approval-required: "admin"
+
+    gravitee.io/description: "Drools Kogito Decision API"
+    gravitee.io/version: "latest"
+    gravitee.io/tags: "drools,decision,kogito"
+    gravitee.io/definition-name: "drools-decision-service"
+    gravitee.io/definition-summary: "Drools Decision Service"
+    gravitee.io/definition-description: "Decision execution API"
+    gravitee.io/definition-version: "latest"
+    gravitee.io/definition-type: "HTTP"
+    gravitee.io/definition-context-path: "/decisions"
+    gravitee.io/definition-visibility: "PUBLIC"
+    gravitee.io/definition-state: "STARTED"
+    gravitee.io/definition-lifecycle-state: "PUBLISHED"
+
+    gravitee.io/definition-listener-host: "kogito-decision-service.drools.svc.cluster.local"
+    gravitee.io/definition-listener-port: "8080"
+
+    gravitee.io/definition-groups: "rules"
+    gravitee.io/definition-tags: "drools,kogito,decisions"
+    gravitee.io/definition-labels: "internal,decisions"
+    gravitee.io/definition-categories: "rules"
+    gravitee.io/definition-path-mappings: "/decisions/*"
+
+    gravitee.io/definition-metadata: '{"owner":"drools","system":"rules-engine"}'
+    gravitee.io/definition-properties: '{"tier":"internal","region":"cluster","token_exchange_url":"https://auth.suncoast.systems/realms/internal/protocol/openid-connect/token","token_exchange_client_id":"<path:secret/data/keycloak-client-id-drools-kie-server-service#value>","token_exchange_client_secret":"<path:secret/data/keycloak-client-secret-drools-kie-server-service#value>"}'
+    gravitee.io/definition-resources: '[]'
+    gravitee.io/definition-endpoint-groups: '[{"name":"default","type":"http-proxy","sharedConfiguration":{"http":{"version":"HTTP_1_1","connectTimeout":30000,"readTimeout":300000,"idleTimeout":300000,"keepAlive":true,"keepAliveTimeout":30000,"pipelining":false,"useCompression":false,"propagateClientAcceptEncoding":false,"followRedirects":false,"maxConcurrentConnections":20}},"services":{"healthCheck":{"enabled":true,"overrideConfiguration":true,"type":"http-health-check","configuration":{"schedule":"*/30 * * * * *","target":"/kie-server/services/rest/server","method":"GET","overrideEndpointPath":true,"headers":[],"assertion":"{#response.status == 200 || #response.status == 401 || #response.status == 403}","successThreshold":2,"failureThreshold":2}}},"endpoints":[{"name":"decision-service-http","type":"http-proxy","inheritConfiguration":true,"weight":1,"configuration":{"target":"http://kogito-decision-service.drools.svc.cluster.local:8080"},"secondary":false}]}]'
+    gravitee.io/definition-plans: '{"jwt-internal":{"name":"JWT Internal","description":"Keycloak internal realm JWT","security":{"type":"JWT","configuration":{"signature":"RSA_RS256","publicKeyResolver":"JWKS_URL","resolverParameter":"https://auth.suncoast.systems/realms/internal/protocol/openid-connect/certs","userClaim":"preferred_username"}},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"{#jwt != null && #jwt.claims[\"iss\"] == \"https://auth.suncoast.systems/realms/internal\"}"},"jwt-external":{"name":"JWT External","description":"Keycloak external realm JWT","security":{"type":"JWT","configuration":{"signature":"RSA_RS256","publicKeyResolver":"JWKS_URL","resolverParameter":"https://auth.suncoast.systems/realms/external/protocol/openid-connect/certs","userClaim":"preferred_username"}},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"{#jwt != null && #jwt.claims[\"iss\"] == \"https://auth.suncoast.systems/realms/external\"}"}}'
+    gravitee.io/definition-flows: '[{"name":"token-exchange","enabled":true,"request":[{"name":"keycloak-token-exchange","policy":"policy-http-callout","enabled":true,"description":"Exchange token to internal realm","messageCondition":"{#request.headers[\"Authorization\"] != null && #request.headers[\"Authorization\"].size() > 0 && #request.headers[\"Authorization\"][0].startsWith(\"Bearer \")}","configuration":{"url":"{#properties[\"token_exchange_url\"]}","method":"POST","headers":[{"name":"Content-Type","value":"application/x-www-form-urlencoded"}],"body":"grant_type=urn:ietf:params:oauth:grant-type:token-exchange&client_id={#properties[\"token_exchange_client_id\"]}&client_secret={#properties[\"token_exchange_client_secret\"]}&subject_token={#request.headers[\"Authorization\"][0].substring(7)}","exitOnError":true,"response":{"body":"token_exchange_response"}}},{"name":"strip-auth-header","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"token_exchange_response\"] != null}","configuration":{"remove":["Authorization"]}},{"name":"apply-exchanged-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"token_exchange_response\"] != null}","configuration":{"add":[{"name":"Authorization","value":"Bearer {#jsonPath(#context.attributes[\"token_exchange_response\"], \"$.access_token\")}"}]}}]}]'
+    gravitee.io/definition-response-templates: '{}'
+    gravitee.io/definition-analytics: '{"enabled":true,"logging":null}'
+    gravitee.io/definition-entrypoints: '[]'
 spec:
   selector:
     app: kogito-decision-service
@@ -1074,6 +1845,8 @@ metadata:
   name: api-gateway
   namespace: drools
   labels: { app: api-gateway }
+  annotations:
+    reloader.stakater.com/auto: "true"
 spec:
   replicas: 2
   selector:
@@ -1252,7 +2025,7 @@ data:
         name: drools-rules-service
     drools:
       kie-server:
-        location: https://api-drools.teleport.app.suncoast.systems/kie-server/services/rest/server
+        location: http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/kie-server/services/rest/server
         username: kieserver
         password: kieserver1!
       rules:
@@ -1274,6 +2047,8 @@ metadata:
   name: drools-rules-service
   namespace: drools
   labels: { app: drools-rules-service }
+  annotations:
+    reloader.stakater.com/auto: "true"
 spec:
   replicas: 2
   selector:
@@ -1301,7 +2076,7 @@ spec:
           ports: [{ containerPort: 8080 }]
           env:
             - { name: JAVA_OPTS, value: "-Xms128m -Xmx512m" }
-            - { name: KIE_SERVER_URL, value: "https://api-drools.teleport.app.suncoast.systems/kie-server/services/rest/server" }
+            - { name: KIE_SERVER_URL, value: "http://gravitee-gateway.k8s-api-gateway.svc.cluster.local:8082/kie-server/services/rest/server" }
           volumeMounts:
             - { name: config, mountPath: /app/config }
           readinessProbe:

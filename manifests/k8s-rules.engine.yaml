@@ -419,7 +419,7 @@ spec:
           args:
             - |
               set -euo pipefail
-              apk add --no-cache jq
+              apk add --no-cache jq curl
               export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
 
               for i in $(seq 1 30); do
@@ -677,6 +677,13 @@ data:
     if (outcome != success) of /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:read-resource()
       /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:add(value="${env.OIDC_KIE_SERVER_CLIENT_SECRET:${env.OIDC_CLIENT_SECRET:}}")
     end-if
+    if (outcome != success) of /subsystem=elytron/token-realm=keycloak-token-realm:read-resource()
+      /subsystem=elytron/token-realm=keycloak-token-realm:add(jwt={issuer=["${env.OIDC_AUTH_URL}/realms/${env.OIDC_REALM}"], public-key="${env.OIDC_JWT_PUBLIC_KEY}"}, principal-claim=preferred_username)
+    end-if
+    if (outcome == success) of /subsystem=elytron/security-domain=ApplicationDomain:read-resource()
+      /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=realms, value=[{realm=keycloak-token-realm, role-decoder=from-roles-attribute},{realm=KieRealm, role-decoder=from-roles-attribute},{realm=ApplicationRealm, role-decoder=groups-to-roles},{realm=local}])
+      /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=default-realm, value=keycloak-token-realm)
+    end-if
     if (outcome != success) of /subsystem=elytron/service-loader-http-server-mechanism-factory=keycloak:read-resource()
       /subsystem=elytron/service-loader-http-server-mechanism-factory=keycloak:add(module=org.keycloak.keycloak-wildfly-elytron-oidc-adapter)
     end-if
@@ -684,7 +691,10 @@ data:
       /subsystem=elytron/aggregate-http-server-mechanism-factory=global-keycloak:add(http-server-mechanism-factories=[global,keycloak])
     end-if
     if (outcome != success) of /subsystem=elytron/http-authentication-factory=keycloak-http-authentication:read-resource()
-      /subsystem=elytron/http-authentication-factory=keycloak-http-authentication:add(http-server-mechanism-factory=global-keycloak,security-domain=ApplicationDomain,mechanism-configurations=[{mechanism-name=KEYCLOAK},{mechanism-name=FORM,mechanism-realm=Application Realm},{mechanism-name=BASIC,mechanism-realm=Application Realm}])
+      /subsystem=elytron/http-authentication-factory=keycloak-http-authentication:add(http-server-mechanism-factory=global-keycloak,security-domain=ApplicationDomain,mechanism-configurations=[{mechanism-name=KEYCLOAK},{mechanism-name=FORM,mechanism-realm=ApplicationRealm},{mechanism-name=BASIC,mechanism-realm=ApplicationRealm}])
+    end-if
+    if (outcome == success) of /subsystem=elytron/http-authentication-factory=keycloak-http-authentication:read-resource()
+      /subsystem=elytron/http-authentication-factory=keycloak-http-authentication:write-attribute(name=mechanism-configurations,value=[{mechanism-name=KEYCLOAK},{mechanism-name=FORM,mechanism-realm=ApplicationRealm},{mechanism-name=BASIC,mechanism-realm=ApplicationRealm}])
     end-if
     if (outcome == success) of /subsystem=undertow/application-security-domain=other:read-resource()
       batch
@@ -810,6 +820,13 @@ data:
     end-if
     if (outcome != success) of /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:read-resource()
       /subsystem=keycloak/secure-deployment=kie-server.war/credential=secret:add(value="${env.OIDC_KIE_SERVER_CLIENT_SECRET:${env.OIDC_CLIENT_SECRET:}}")
+    end-if
+    if (outcome != success) of /subsystem=elytron/token-realm=keycloak-token-realm:read-resource()
+      /subsystem=elytron/token-realm=keycloak-token-realm:add(jwt={issuer=["${env.OIDC_AUTH_URL}/realms/${env.OIDC_REALM}"], public-key="${env.OIDC_JWT_PUBLIC_KEY}"}, principal-claim=preferred_username)
+    end-if
+    if (outcome == success) of /subsystem=elytron/security-domain=ApplicationDomain:read-resource()
+      /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=realms, value=[{realm=keycloak-token-realm, role-decoder=from-roles-attribute},{realm=KieRealm, role-decoder=from-roles-attribute},{realm=ApplicationRealm, role-decoder=groups-to-roles},{realm=local}])
+      /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=default-realm, value=keycloak-token-realm)
     end-if
     if (outcome == success) of /subsystem=undertow/server=default-server/http-listener=default:read-resource()
       /subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=proxy-address-forwarding,value=true)
@@ -1081,7 +1098,7 @@ spec:
             - |
               set -e
               export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
-              apk add --no-cache jq
+              apk add --no-cache jq curl
               VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
                 role=drools \
                 jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token))
@@ -1090,16 +1107,27 @@ spec:
               OIDC_ENV_FILE="/shared/oidc-env.sh"
               : > "$OIDC_ENV_FILE"
               # Base OIDC settings (constant)
-              echo 'export OIDC_AUTH_URL="https://auth.suncoast.systems"' >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_REALM="internal"' >> "$OIDC_ENV_FILE"
+              OIDC_AUTH_URL="https://auth.suncoast.systems"
+              OIDC_REALM="internal"
+              echo "export OIDC_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
+              echo "export OIDC_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
               echo 'export OIDC_CONFIDENTIAL="true"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_KIE_SERVER_AUTH_URL="https://auth.suncoast.systems"' >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_KIE_SERVER_REALM="internal"' >> "$OIDC_ENV_FILE"
+              echo "export OIDC_KIE_SERVER_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
+              echo "export OIDC_KIE_SERVER_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_CONFIDENTIAL="false"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_BEARER_ONLY="true"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
+
+              REALM_JSON="$(curl -fsSL "$OIDC_AUTH_URL/realms/$OIDC_REALM")"
+              OIDC_PUBLIC_KEY="$(printf '%s' "$REALM_JSON" | jq -r '.public_key // empty')"
+              if [ -z "${OIDC_PUBLIC_KEY:-}" ]; then
+                echo "❌ Keycloak realm public key not found"
+                exit 1
+              fi
+              OIDC_PUBLIC_KEY_PEM="$(printf '-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----' "$OIDC_PUBLIC_KEY")"
+              printf 'export OIDC_JWT_PUBLIC_KEY="%s"\n' "$OIDC_PUBLIC_KEY_PEM" >> "$OIDC_ENV_FILE"
 
               OIDC_ID_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-workbench 2>/dev/null || true)"
               OIDC_ID="$(printf '%s' "$OIDC_ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
@@ -1165,7 +1193,7 @@ spec:
             - |
               set -e
               export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
-              apk add jq
+              apk add --no-cache jq curl
               # Authenticate with Kubernetes auth
               VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
                 role=drools \
@@ -1187,16 +1215,27 @@ spec:
               OIDC_ENV_FILE="/shared/oidc-env.sh"
               : > "$OIDC_ENV_FILE"
               # Base OIDC settings (constant)
-              echo 'export OIDC_AUTH_URL="https://auth.suncoast.systems"' >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_REALM="internal"' >> "$OIDC_ENV_FILE"
+              OIDC_AUTH_URL="https://auth.suncoast.systems"
+              OIDC_REALM="internal"
+              echo "export OIDC_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
+              echo "export OIDC_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
               echo 'export OIDC_CONFIDENTIAL="true"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_KIE_SERVER_AUTH_URL="https://auth.suncoast.systems"' >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_KIE_SERVER_REALM="internal"' >> "$OIDC_ENV_FILE"
+              echo "export OIDC_KIE_SERVER_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
+              echo "export OIDC_KIE_SERVER_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_CONFIDENTIAL="false"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_BEARER_ONLY="true"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
+
+              REALM_JSON="$(curl -fsSL "$OIDC_AUTH_URL/realms/$OIDC_REALM")"
+              OIDC_PUBLIC_KEY="$(printf '%s' "$REALM_JSON" | jq -r '.public_key // empty')"
+              if [ -z "${OIDC_PUBLIC_KEY:-}" ]; then
+                echo "❌ Keycloak realm public key not found"
+                exit 1
+              fi
+              OIDC_PUBLIC_KEY_PEM="$(printf '-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----' "$OIDC_PUBLIC_KEY")"
+              printf 'export OIDC_JWT_PUBLIC_KEY="%s"\n' "$OIDC_PUBLIC_KEY_PEM" >> "$OIDC_ENV_FILE"
 
               OIDC_ID_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-workbench 2>/dev/null || true)"
               OIDC_ID="$(printf '%s' "$OIDC_ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
@@ -1516,12 +1555,23 @@ spec:
 
               OIDC_ENV_FILE="/shared/oidc-env.sh"
               : > "$OIDC_ENV_FILE"
-              echo 'export OIDC_AUTH_URL="https://auth.suncoast.systems"' >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_REALM="internal"' >> "$OIDC_ENV_FILE"
+              OIDC_AUTH_URL="https://auth.suncoast.systems"
+              OIDC_REALM="internal"
+              echo "export OIDC_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
+              echo "export OIDC_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
               echo 'export OIDC_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_KIE_SERVER_AUTH_URL="https://auth.suncoast.systems"' >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_KIE_SERVER_REALM="internal"' >> "$OIDC_ENV_FILE"
+              echo "export OIDC_KIE_SERVER_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
+              echo "export OIDC_KIE_SERVER_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_BEARER_ONLY="true"' >> "$OIDC_ENV_FILE"
+
+              REALM_JSON="$(curl -fsSL "$OIDC_AUTH_URL/realms/$OIDC_REALM")"
+              OIDC_PUBLIC_KEY="$(printf '%s' "$REALM_JSON" | jq -r '.public_key // empty')"
+              if [ -z "${OIDC_PUBLIC_KEY:-}" ]; then
+                echo "❌ Keycloak realm public key not found"
+                exit 1
+              fi
+              OIDC_PUBLIC_KEY_PEM="$(printf '-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----' "$OIDC_PUBLIC_KEY")"
+              printf 'export OIDC_JWT_PUBLIC_KEY="%s"\n' "$OIDC_PUBLIC_KEY_PEM" >> "$OIDC_ENV_FILE"
 
               WB_ID_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-workbench 2>/dev/null || true)"
               WB_ID="$(printf '%s' "$WB_ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"

@@ -533,7 +533,7 @@ spec:
                     -s "name=$MAPPER_NAME" \
                     -s "protocol=openid-connect" \
                     -s "protocolMapper=oidc-usermodel-realm-role-mapper" \
-                    -s "config.\"claim.name\"=roles" \
+                    -s "config.\"claim.name\"=realm_access.roles" \
                     -s "config.\"jsonType.label\"=String" \
                     -s "config.\"multivalued\"=true" \
                     -s "config.\"access.token.claim\"=true" \
@@ -547,7 +547,7 @@ spec:
                   -s "name=$MAPPER_NAME" \
                   -s "protocol=openid-connect" \
                   -s "protocolMapper=oidc-usermodel-realm-role-mapper" \
-                  -s "config.\"claim.name\"=roles" \
+                  -s "config.\"claim.name\"=realm_access.roles" \
                   -s "config.\"jsonType.label\"=String" \
                   -s "config.\"multivalued\"=true" \
                   -s "config.\"access.token.claim\"=true" \

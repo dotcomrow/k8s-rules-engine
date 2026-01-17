@@ -482,6 +482,7 @@ spec:
               REALM="internal"
               KCADM="/opt/keycloak/bin/kcadm.sh"
               MAPPER_NAME="roles-claim"
+              CLIENT_ROLE_MAPPER_NAME="client-roles-claim"
               ROLE_LIST="admin rest-all developer analyst manager process-admin user kie-server"
 
               if [ -z "${KIE_SERVER_SERVICE_CLIENT_ID:-}" ]; then
@@ -556,6 +557,75 @@ spec:
                 echo "✅ Added Keycloak mapper $MAPPER_NAME for $client_id"
               }
 
+              ensure_client_roles_mapper() {
+                local client_id="$1"
+                local client_uuid=""
+                local existing=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  client_uuid="$line"
+                  break
+                done < <($KCADM get clients -r "$REALM" -q "clientId=$client_id" \
+                  --fields id --format csv)
+                if [ -z "$client_uuid" ] || [ "$client_uuid" = "id" ]; then
+                  echo "❌ Keycloak client not found: $client_id"
+                  exit 1
+                fi
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id,name" ] || [ "$line" = "\"id\",\"name\"" ]; then
+                    continue
+                  fi
+                  IFS=, read -r id name <<< "$line"
+                  id=${id#\"}
+                  id=${id%\"}
+                  name=${name#\"}
+                  name=${name%\"}
+                  if [ "$name" = "$CLIENT_ROLE_MAPPER_NAME" ]; then
+                    existing="$id"
+                    break
+                  fi
+                done < <($KCADM get "clients/$client_uuid/protocol-mappers/models" -r "$REALM" \
+                  --fields id,name --format csv)
+
+                if [ -n "$existing" ] && [ "$existing" != "id" ]; then
+                  echo "🔁 Updating Keycloak mapper $CLIENT_ROLE_MAPPER_NAME for $client_id"
+                  $KCADM update "clients/$client_uuid/protocol-mappers/models/$existing" -r "$REALM" \
+                    -s "name=$CLIENT_ROLE_MAPPER_NAME" \
+                    -s "protocol=openid-connect" \
+                    -s "protocolMapper=oidc-usermodel-client-role-mapper" \
+                    -s "config.\"usermodel.clientRoleMapping.clientId\"=$client_id" \
+                    -s "config.\"claim.name\"=resource_access.${client_id}.roles" \
+                    -s "config.\"jsonType.label\"=String" \
+                    -s "config.\"multivalued\"=true" \
+                    -s "config.\"access.token.claim\"=true" \
+                    -s "config.\"id.token.claim\"=true" \
+                    -s "config.\"userinfo.token.claim\"=false"
+                  echo "✅ Updated Keycloak mapper $CLIENT_ROLE_MAPPER_NAME for $client_id"
+                  return 0
+                fi
+
+                $KCADM create "clients/$client_uuid/protocol-mappers/models" -r "$REALM" \
+                  -s "name=$CLIENT_ROLE_MAPPER_NAME" \
+                  -s "protocol=openid-connect" \
+                  -s "protocolMapper=oidc-usermodel-client-role-mapper" \
+                  -s "config.\"usermodel.clientRoleMapping.clientId\"=$client_id" \
+                  -s "config.\"claim.name\"=resource_access.${client_id}.roles" \
+                  -s "config.\"jsonType.label\"=String" \
+                  -s "config.\"multivalued\"=true" \
+                  -s "config.\"access.token.claim\"=true" \
+                  -s "config.\"id.token.claim\"=true" \
+                  -s "config.\"userinfo.token.claim\"=false"
+                echo "✅ Added Keycloak mapper $CLIENT_ROLE_MAPPER_NAME for $client_id"
+              }
+
               for i in $(seq 1 30); do
                 if $KCADM config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
                   --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
@@ -573,6 +643,7 @@ spec:
 
               ensure_roles_mapper "$WORKBENCH_CLIENT_ID"
               ensure_roles_mapper "$KIE_SERVER_SERVICE_CLIENT_ID"
+              ensure_client_roles_mapper "$WORKBENCH_CLIENT_ID"
 
               KIE_CLIENT_UUID=""
               while IFS= read -r line; do
@@ -657,7 +728,7 @@ data:
       /subsystem=keycloak/secure-deployment=business-central.war:add(realm="${env.OIDC_REALM}",auth-server-url="${env.OIDC_AUTH_URL}",ssl-required=EXTERNAL,resource="${env.OIDC_CLIENT_ID}",public-client=false,bearer-only=${env.OIDC_BEARER_ONLY:false},principal-attribute=preferred_username)
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-resource()
-      /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=use-resource-role-mappings,value=false)
+      /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=use-resource-role-mappings,value=true)
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-attribute(name=verify-token-audience)
       /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=verify-token-audience,value=false)
@@ -794,7 +865,7 @@ data:
       /subsystem=keycloak/secure-deployment=business-central.war:add(realm="${env.OIDC_REALM}",auth-server-url="${env.OIDC_AUTH_URL}",ssl-required=EXTERNAL,resource="${env.OIDC_CLIENT_ID}",public-client=false,bearer-only=${env.OIDC_BEARER_ONLY:false},principal-attribute=preferred_username)
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-resource()
-      /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=use-resource-role-mappings,value=false)
+      /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=use-resource-role-mappings,value=true)
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-attribute(name=verify-token-audience)
       /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=verify-token-audience,value=false)
@@ -1404,7 +1475,7 @@ spec:
                 -Dorg.kie.security.useSSO=true
                 -Dorg.uberfire.ext.security.management.keycloak.enabled=true
                 -Dorg.uberfire.ext.security.management.keycloak.authServer=https://auth.suncoast.systems
-                -Dorg.uberfire.ext.security.management.keycloak.use-resource-role-mappings=false
+                -Dorg.uberfire.ext.security.management.keycloak.use-resource-role-mappings=true
             - name: JAVA_OPTS_APPEND
               value: >-
                 -Djboss.logging.level.org.keycloak.adapters=DEBUG

@@ -657,7 +657,7 @@ data:
       /subsystem=keycloak/secure-deployment=business-central.war:add(realm="${env.OIDC_REALM}",auth-server-url="${env.OIDC_AUTH_URL}",ssl-required=EXTERNAL,resource="${env.OIDC_CLIENT_ID}",public-client=false,bearer-only=${env.OIDC_BEARER_ONLY:false},principal-attribute=preferred_username)
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-resource()
-      /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=use-resource-role-mappings,value=false)
+      /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=use-resource-role-mappings,value=true)
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-attribute(name=verify-token-audience)
       /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=verify-token-audience,value=false)
@@ -1404,7 +1404,7 @@ spec:
                 -Dorg.kie.security.useSSO=true
                 -Dorg.uberfire.ext.security.management.keycloak.enabled=true
                 -Dorg.uberfire.ext.security.management.keycloak.authServer=https://auth.suncoast.systems
-                -Dorg.uberfire.ext.security.management.keycloak.use-resource-role-mappings=false
+                -Dorg.uberfire.ext.security.management.keycloak.use-resource-role-mappings=true
             - name: JAVA_OPTS_APPEND
               value: >-
                 -Djboss.logging.level.org.keycloak.adapters=DEBUG

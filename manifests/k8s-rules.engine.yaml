@@ -1379,6 +1379,8 @@ spec:
             items:
               - { key: enable-oidc.cli,    path: enable-oidc.cli,    mode: 0444 }
               - { key: configure-oidc.sh,  path: configure-oidc.sh,  mode: 0555 }
+        - name: wildfly-modules
+          emptyDir: {}
       initContainers:
         - name: wait-for-config-job
           image: alpine/k8s:1.31.4

@@ -1044,7 +1044,7 @@ spec:
           emptyDir: {}
         - name: wildfly-oidc
           configMap:
-            name: wildfly-oidc-config-kieserver
+            name: wildfly-oidc-config
             items:
               - { key: enable-oidc.cli,    path: enable-oidc.cli,    mode: 0444 }
               - { key: configure-oidc.sh,  path: configure-oidc.sh,  mode: 0555 }
@@ -1472,7 +1472,7 @@ spec:
           emptyDir: {}
         - name: wildfly-oidc
           configMap:
-            name: wildfly-oidc-config
+            name: wildfly-oidc-config-kieserver
             items:
               - { key: enable-oidc.cli,    path: enable-oidc.cli,    mode: 0444 }
               - { key: configure-oidc.sh,  path: configure-oidc.sh,  mode: 0555 }

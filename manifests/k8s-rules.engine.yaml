@@ -1422,7 +1422,7 @@ spec:
           command: ["/bin/sh","-c"]
           env:
             - name: KEYCLOAK_ADAPTER_URL
-              value: "https://repo1.maven.org/maven2/org/keycloak/keycloak-wildfly-adapter-dist/16.1.1/keycloak-wildfly-adapter-dist-16.1.1.zip"
+              value: "https://repo1.maven.org/maven2/org/keycloak/keycloak-wildfly-adapter-dist/24.0.5/keycloak-wildfly-adapter-dist-24.0.5.zip"
           args:
             - |
               set -euo pipefail
@@ -1750,7 +1750,7 @@ spec:
           command: ["/bin/sh","-c"]
           env:
             - name: KEYCLOAK_ADAPTER_URL
-              value: "https://repo1.maven.org/maven2/org/keycloak/keycloak-wildfly-adapter-dist/24.0.5/keycloak-wildfly-adapter-dist-24.0.5.zip"
+              value: "https://repo1.maven.org/maven2/org/keycloak/keycloak-wildfly-adapter-dist/16.1.1/keycloak-wildfly-adapter-dist-16.1.1.zip"
           args:
             - |
               set -euo pipefail

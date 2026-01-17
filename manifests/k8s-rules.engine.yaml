@@ -242,9 +242,10 @@ spec:
               EOF
 
               vault policy write "keycloak-admin-job" - <<'EOF'
-              path "secret/data/keycloak/admin"                    { capabilities = ["read"] }
-              path "secret/data/keycloak-client-id-drools-workbench" { capabilities = ["read"] }
+              path "secret/data/keycloak/admin"                      { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-drools-workbench"  { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-drools-kie-server-service" { capabilities = ["read"] }
+              path "secret/data/drools/admin"                        { capabilities = ["read"] }
               EOF
 
               vault write auth/kubernetes/role/drools \
@@ -446,6 +447,14 @@ spec:
                 exit 1
               fi
 
+              CONTROLLER_JSON="$(vault kv get -format=json secret/drools/admin)"
+              CONTROLLER_USER="$(printf '%s' "$CONTROLLER_JSON" | jq -r '.data.data.username // empty')"
+              CONTROLLER_PASS="$(printf '%s' "$CONTROLLER_JSON" | jq -r '.data.data.password // empty')"
+              if [ -z "$CONTROLLER_USER" ] || [ -z "$CONTROLLER_PASS" ]; then
+                echo "❌ Missing drools controller credentials in Vault"
+                exit 1
+              fi
+
               CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-workbench)"
               CLIENT_ID="$(printf '%s' "$CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
               if [ -z "$CLIENT_ID" ]; then
@@ -463,6 +472,8 @@ spec:
               cat > /shared/keycloak-env.sh <<EOF
               export KEYCLOAK_ADMIN="${ADMIN_USER}"
               export KEYCLOAK_ADMIN_PASSWORD="${ADMIN_PASS}"
+              export CONTROLLER_USER="${CONTROLLER_USER}"
+              export CONTROLLER_PASSWORD="${CONTROLLER_PASS}"
               export WORKBENCH_CLIENT_ID="${CLIENT_ID}"
               export KIE_SERVER_SERVICE_CLIENT_ID="${KIE_CLIENT_ID}"
               EOF
@@ -485,9 +496,14 @@ spec:
               CLIENT_ROLE_MAPPER_NAME="client-roles-claim"
               ROLE_LIST="admin rest-all developer analyst manager process-admin user kie-server"
               WORKBENCH_PUBLIC_URL="https://workbench-drools.teleport.app.suncoast.systems"
+              CONTROLLER_ROLE_LIST="admin rest-all kie-server"
 
               if [ -z "${KIE_SERVER_SERVICE_CLIENT_ID:-}" ]; then
                 echo "❌ Missing KIE_SERVER_SERVICE_CLIENT_ID in keycloak-env.sh"
+                exit 1
+              fi
+              if [ -z "${CONTROLLER_USER:-}" ] || [ -z "${CONTROLLER_PASSWORD:-}" ]; then
+                echo "❌ Missing CONTROLLER_USER in keycloak-env.sh"
                 exit 1
               fi
 
@@ -654,6 +670,61 @@ spec:
                 echo "Updated redirect URIs for $client_id"
               }
 
+              ensure_direct_access_grants() {
+                local client_id="$1"
+                local client_uuid=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  client_uuid="$line"
+                  break
+                done < <($KCADM get clients -r "$REALM" -q "clientId=$client_id" \
+                  --fields id --format csv)
+                if [ -z "$client_uuid" ] || [ "$client_uuid" = "id" ]; then
+                  echo "❌ Keycloak client not found: $client_id"
+                  exit 1
+                fi
+
+                echo "Enabling direct access grants for $client_id"
+                $KCADM update "clients/$client_uuid" -r "$REALM" \
+                  -s "directAccessGrantsEnabled=true"
+                echo "Enabled direct access grants for $client_id"
+              }
+
+              ensure_controller_user() {
+                local username="$1"
+                local password="$2"
+                local user_id=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  user_id="$line"
+                  break
+                done < <($KCADM get users -r "$REALM" -q "username=$username" \
+                  --fields id --format csv)
+
+                if [ -z "$user_id" ] || [ "$user_id" = "id" ]; then
+                  echo "Creating controller user $username"
+                  $KCADM create users -r "$REALM" \
+                    -s "username=$username" \
+                    -s "enabled=true" >/dev/null
+                else
+                  echo "Controller user $username already exists"
+                fi
+
+                $KCADM set-password -r "$REALM" --username "$username" \
+                  --new-password "$password" --temporary=false >/dev/null
+              }
               for i in $(seq 1 30); do
                 if $KCADM config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
                   --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
@@ -673,6 +744,8 @@ spec:
               ensure_roles_mapper "$KIE_SERVER_SERVICE_CLIENT_ID"
               ensure_client_roles_mapper "$WORKBENCH_CLIENT_ID"
               ensure_workbench_redirects "$WORKBENCH_CLIENT_ID"
+              ensure_direct_access_grants "$WORKBENCH_CLIENT_ID"
+              ensure_controller_user "$CONTROLLER_USER" "$CONTROLLER_PASSWORD"
 
               KIE_CLIENT_UUID=""
               while IFS= read -r line; do
@@ -731,6 +804,14 @@ spec:
                   echo "Role $role already assigned to service account $SA_USERNAME"
                 fi
               done
+
+              for role in $CONTROLLER_ROLE_LIST; do
+                if $KCADM add-roles -r "$REALM" --uusername "$CONTROLLER_USER" --rolename "$role" >/dev/null 2>&1; then
+                  echo "✅ Assigned role $role to controller user $CONTROLLER_USER"
+                else
+                  echo "Role $role already assigned to controller user $CONTROLLER_USER"
+                fi
+              done
           volumeMounts:
             - { name: keycloak-admin-env, mountPath: /shared }
 
@@ -759,6 +840,9 @@ data:
     if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-resource()
       /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=use-resource-role-mappings,value=true)
     end-if
+    if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-resource()
+      /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=enable-basic-auth,value=${env.OIDC_ENABLE_BASIC_AUTH:true})
+    end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-attribute(name=verify-token-audience)
       /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=verify-token-audience,value=false)
     end-if
@@ -770,6 +854,9 @@ data:
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
       /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=use-resource-role-mappings,value=false)
+    end-if
+    if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
+      /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=enable-basic-auth,value=${env.OIDC_KIE_SERVER_ENABLE_BASIC_AUTH:true})
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-attribute(name=verify-token-audience)
       /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=verify-token-audience,value=false)
@@ -909,6 +996,9 @@ data:
     if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-resource()
       /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=use-resource-role-mappings,value=true)
     end-if
+    if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-resource()
+      /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=enable-basic-auth,value=${env.OIDC_ENABLE_BASIC_AUTH:true})
+    end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=business-central.war:read-attribute(name=verify-token-audience)
       /subsystem=keycloak/secure-deployment=business-central.war:write-attribute(name=verify-token-audience,value=false)
     end-if
@@ -920,6 +1010,9 @@ data:
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
       /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=use-resource-role-mappings,value=false)
+    end-if
+    if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
+      /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=enable-basic-auth,value=${env.OIDC_KIE_SERVER_ENABLE_BASIC_AUTH:true})
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-attribute(name=verify-token-audience)
       /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=verify-token-audience,value=false)
@@ -1661,9 +1754,11 @@ spec:
               OIDC_REALM="internal"
               echo "export OIDC_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
               echo "export OIDC_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
               echo "export OIDC_KIE_SERVER_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
               echo "export OIDC_KIE_SERVER_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_BEARER_ONLY="true"' >> "$OIDC_ENV_FILE"
 
               REALM_JSON="$(curl -fsSL "$OIDC_AUTH_URL/realms/$OIDC_REALM")"

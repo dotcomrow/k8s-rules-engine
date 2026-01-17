@@ -955,6 +955,8 @@ spec:
           emptyDir: {}
         - name: wildfly-modules
           emptyDir: {}
+        - name: wildfly-modules
+          emptyDir: {}
 
       initContainers:
         - name: wait-for-config-job

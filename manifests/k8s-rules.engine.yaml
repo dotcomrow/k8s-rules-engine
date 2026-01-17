@@ -953,10 +953,6 @@ spec:
               - { key: configure-oidc.sh,  path: configure-oidc.sh,  mode: 0555 }
         - name: wildfly-modules
           emptyDir: {}
-        - name: wildfly-modules
-          emptyDir: {}
-        - name: wildfly-modules
-          emptyDir: {}
 
       initContainers:
         - name: wait-for-config-job

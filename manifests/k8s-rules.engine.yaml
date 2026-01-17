@@ -791,6 +791,9 @@ data:
     if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters:read-resource()
       /subsystem=logging/logger=org.keycloak.adapters:add(level=DEBUG)
     end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.AdapterUtils:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.AdapterUtils:add(level=TRACE)
+    end-if
     if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.OAuthRequestAuthenticator:read-resource()
       /subsystem=logging/logger=org.keycloak.adapters.OAuthRequestAuthenticator:add(level=DEBUG)
     end-if
@@ -902,6 +905,9 @@ data:
     end-if
     if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters:read-resource()
       /subsystem=logging/logger=org.keycloak.adapters:add(level=DEBUG)
+    end-if
+    if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.AdapterUtils:read-resource()
+      /subsystem=logging/logger=org.keycloak.adapters.AdapterUtils:add(level=TRACE)
     end-if
     if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.OAuthRequestAuthenticator:read-resource()
       /subsystem=logging/logger=org.keycloak.adapters.OAuthRequestAuthenticator:add(level=DEBUG)

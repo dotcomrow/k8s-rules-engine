@@ -1529,6 +1529,10 @@ spec:
                 echo "KIE server credentials file not found at /vault-secrets/kie-users-env.sh"
                 exit 1
               fi
+              if [ -f /vault-secrets/oidc-env.sh ]; then
+                # shellcheck disable=SC1091
+                . /vault-secrets/oidc-env.sh
+              fi
               exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 \
                 -Dorg.kie.server.id="${KIE_SERVER_ID}" \
                 -Dorg.kie.server.user="${KIE_SERVER_USER}" \

@@ -740,6 +740,45 @@ spec:
                 exit 1
               fi
 
+              find_direct_grant_flow() {
+                local flow=""
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "alias" ] || [ "$line" = "\"alias\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  case "$line" in
+                    "direct grant"|"direct grant flow"|"direct-grant")
+                      flow="$line"
+                      break
+                      ;;
+                  esac
+                done < <($KCADM get authentication/flows -r "$REALM" --fields alias --format csv)
+                printf '%s' "$flow"
+              }
+
+              enable_direct_grant_flow() {
+                local realm="$1"
+                local current=""
+                current="$($KCADM get "realms/$realm" --fields directGrantFlow --format csv | awk -F, 'NR==2{print $1}' | tr -d '\r"')"
+                if [ "$current" != "disabled-direct-grant" ] && [ -n "$current" ]; then
+                  echo "Direct grant flow already enabled for $realm: $current"
+                  return 0
+                fi
+                local flow=""
+                flow="$(find_direct_grant_flow)"
+                if [ -z "$flow" ]; then
+                  echo "❌ Direct grant flow not found in realm $realm; leaving disabled"
+                  return 1
+                fi
+                echo "Enabling direct grant flow for $realm: $flow"
+                $KCADM update "realms/$realm" -s "directGrantFlow=$flow" >/dev/null 2>&1 || true
+              }
+
+              enable_direct_grant_flow "$REALM"
+
               ensure_roles_mapper "$WORKBENCH_CLIENT_ID"
               ensure_roles_mapper "$KIE_SERVER_SERVICE_CLIENT_ID"
               ensure_client_roles_mapper "$WORKBENCH_CLIENT_ID"
@@ -1142,7 +1181,9 @@ data:
     embed-server --std-out=echo
     batch
     /subsystem=undertow/configuration=filter/expression-filter=redirect-root:add(expression="path('/') -> redirect('/business-central/')")
+    /subsystem=undertow/configuration=filter/expression-filter=deny-basic-noncontroller:add(expression="not path-prefix('/business-central/rest/controller') and not path-prefix('/business-central/maven2') and regex['^Basic '](%{i,Authorization}) -> response-code(403)")
     /subsystem=undertow/server=default-server/host=default-host/filter-ref=redirect-root:add
+    /subsystem=undertow/server=default-server/host=default-host/filter-ref=deny-basic-noncontroller:add
     /subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=proxy-address-forwarding,value=true)
     /subsystem=undertow/server=default-server/host=default-host:write-attribute(name=default-response-code,value=404)
     run-batch

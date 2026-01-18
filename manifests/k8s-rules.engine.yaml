@@ -2601,9 +2601,11 @@ data:
   KOGITO_DATAINDEX_HTTP_URL: "https://monitoring-drools.teleport.app.suncoast.systems"
   KOGITO_DATAINDEX_WS_URL: "wss://monitoring-drools.teleport.app.suncoast.systems"
   KOGITO_JOBS_SERVICE_URL: "https://jobs-drools.teleport.app.suncoast.systems"
-  KOGITO_CONSOLES_KEYCLOAK_URL: "https://auth.suncoast.systems"
-  KOGITO_CONSOLES_KEYCLOAK_REALM: "internal"
-  KOGITO_CONSOLES_KEYCLOAK_DISABLE_SSL_CERT_VALIDATION: "false"
+  KOGITO_CONSOLES_KEYCLOAK_CONFIG_URL: "https://auth.suncoast.systems"
+  KOGITO_CONSOLES_KEYCLOAK_CONFIG_REALM: "internal"
+  KOGITO_CONSOLES_KEYCLOAK_CONFIG_HEALTH_CHECK_URL: "https://auth.suncoast.systems/realms/internal/.well-known/openid-configuration"
+  KOGITO_CONSOLES_KEYCLOAK_CONFIG_DISABLE_HEALTH_CHECK: "false"
+  KOGITO_CONSOLES_KEYCLOAK_CONFIG_UPDATE_TOKEN_VALIDITY: "30"
 
 ---
 apiVersion: v1
@@ -2691,6 +2693,7 @@ spec:
                 exit 1
               fi
               {
+                echo "export KOGITO_CONSOLES_KEYCLOAK_CONFIG_CLIENT_ID=\"$CLIENT_ID\""
                 echo "export KOGITO_CONSOLES_KEYCLOAK_CLIENT_ID=\"$CLIENT_ID\""
                 echo "export KOGITO_CONSOLES_KEYCLOAK_CLIENT_SECRET=\"$CLIENT_SECRET\""
               } > /shared/kogito-console-env.sh
@@ -2793,6 +2796,7 @@ spec:
                 exit 1
               fi
               {
+                echo "export KOGITO_CONSOLES_KEYCLOAK_CONFIG_CLIENT_ID=\"$CLIENT_ID\""
                 echo "export KOGITO_CONSOLES_KEYCLOAK_CLIENT_ID=\"$CLIENT_ID\""
                 echo "export KOGITO_CONSOLES_KEYCLOAK_CLIENT_SECRET=\"$CLIENT_SECRET\""
               } > /shared/kogito-console-env.sh

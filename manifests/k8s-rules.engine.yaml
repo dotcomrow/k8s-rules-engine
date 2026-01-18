@@ -2816,6 +2816,18 @@ data:
       server {
         listen 8080; server_name localhost;
 
+        location ^~ /assets/images/ {
+          rewrite ^/assets/images/(.*)$ /images/$1 last;
+        }
+
+        location ^~ /assets/fonts/ {
+          rewrite ^/assets/fonts/(.*)$ /fonts/$1 last;
+        }
+
+        location ^~ /assets/pficon/ {
+          rewrite ^/assets/pficon/(.*)$ /fonts/$1 last;
+        }
+
         location /graphql {
           proxy_pass http://data_index;
           proxy_http_version 1.1;
@@ -3008,6 +3020,18 @@ data:
 
       server {
         listen 8080; server_name localhost;
+
+        location ^~ /assets/images/ {
+          rewrite ^/assets/images/(.*)$ /images/$1 last;
+        }
+
+        location ^~ /assets/fonts/ {
+          rewrite ^/assets/fonts/(.*)$ /fonts/$1 last;
+        }
+
+        location ^~ /assets/pficon/ {
+          rewrite ^/assets/pficon/(.*)$ /fonts/$1 last;
+        }
 
         location /graphql {
           proxy_pass http://data_index;

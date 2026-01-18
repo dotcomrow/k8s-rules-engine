@@ -3052,7 +3052,7 @@ data:
           proxy_set_header Accept-Encoding "";
           sub_filter_types text/html;
           sub_filter_once on;
-          sub_filter '</head>' '<style id="kogito-pf-override">:root{--pf-global--BackgroundColor--light-300:#f0f0f0;--pf-global--BackgroundColor--dark-100:#151515;--pf-global--BackgroundColor--dark-300:#212427;} .pf-c-page{background-color:var(--pf-global--BackgroundColor--light-300);} .pf-c-page__header{background-color:var(--pf-global--BackgroundColor--dark-100);} .pf-c-page__sidebar{background-color:var(--pf-global--BackgroundColor--dark-300);}</style></head>';
+          sub_filter '</body>' '<script>(function(){var css=\':root{--pf-global--BackgroundColor--light-300:#f0f0f0;--pf-global--BackgroundColor--dark-100:#151515;--pf-global--BackgroundColor--dark-300:#212427;} .pf-c-page{background-color:var(--pf-global--BackgroundColor--light-300)!important;} .pf-c-page__header{background-color:var(--pf-global--BackgroundColor--dark-100)!important;} .pf-c-page__sidebar{background-color:var(--pf-global--BackgroundColor--dark-300)!important;}\';function apply(){var style=document.getElementById(\"kogito-pf-override\");if(!style){style=document.createElement(\"style\");style.id=\"kogito-pf-override\";style.textContent=css;document.head.appendChild(style);}}if(document.readyState===\"loading\"){document.addEventListener(\"DOMContentLoaded\",apply);}else{apply();}})();</script></body>';
           proxy_read_timeout 300s;
         }
 

@@ -2840,6 +2840,90 @@ data:
           proxy_read_timeout 300s;
         }
 
+        location ~* \\.woff2$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type font/woff2 always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.woff$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type font/woff always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.ttf$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type font/ttf always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.otf$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type font/otf always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.eot$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type application/vnd.ms-fontobject always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.svg$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type image/svg+xml always;
+          proxy_read_timeout 300s;
+        }
+
         location = /app.bundle.js {
           proxy_pass http://console_ui;
           proxy_http_version 1.1;
@@ -2946,6 +3030,90 @@ data:
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $scheme;
           proxy_set_header X-Forwarded-Host $host;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.woff2$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type font/woff2 always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.woff$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type font/woff always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.ttf$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type font/ttf always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.otf$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type font/otf always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.eot$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type application/vnd.ms-fontobject always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.svg$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type image/svg+xml always;
           proxy_read_timeout 300s;
         }
 

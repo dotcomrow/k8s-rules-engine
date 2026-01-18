@@ -771,9 +771,12 @@ spec:
                   exit 1
                 fi
 
+                echo "🔁 Updating client secret for $client_id"
                 $KCADM update "clients/$client_uuid" -r "$REALM" \
-                  -s "clientAuthenticatorType=client-secret" \
-                  -s "secret=$client_secret" >/dev/null 2>&1 || true
+                  -s "publicClient=false" \
+                  -s "clientAuthenticatorType=client-secret" >/dev/null 2>&1 || true
+                $KCADM update "clients/$client_uuid/client-secret" -r "$REALM" \
+                  -s "value=$client_secret" >/dev/null 2>&1 || true
               }
 
               ensure_controller_user() {
@@ -2998,6 +3001,11 @@ spec:
             - { name: KOGITO_DATAINDEX_HTTP_URL, value: "https://kogito-console-drools.teleport.app.suncoast.systems/graphql" }
             - { name: KOGITO_DATAINDEX_WS_URL, value: "wss://kogito-console-drools.teleport.app.suncoast.systems/graphql" }
             - { name: KOGITO_JOBS_SERVICE_URL, value: "https://kogito-console-drools.teleport.app.suncoast.systems/jobs" }
+            - { name: QUARKUS_HTTP_CORS, value: "true" }
+            - { name: QUARKUS_HTTP_CORS_ORIGINS, value: "https://kogito-console-drools.teleport.app.suncoast.systems,https://kogito-task-console-drools.teleport.app.suncoast.systems,https://teleport.app.suncoast.systems" }
+            - { name: QUARKUS_HTTP_CORS_HEADERS, value: "authorization,content-type,accept,origin,referer,cache-control,pragma" }
+            - { name: QUARKUS_HTTP_CORS_METHODS, value: "GET,POST,PUT,DELETE,OPTIONS,PATCH" }
+            - { name: QUARKUS_HTTP_CORS_ACCESS_CONTROL_ALLOW_CREDENTIALS, value: "true" }
           envFrom:
             - configMapRef:
                 name: kogito-console-config
@@ -3164,6 +3172,11 @@ spec:
             - { name: KOGITO_DATAINDEX_HTTP_URL, value: "https://kogito-task-console-drools.teleport.app.suncoast.systems/graphql" }
             - { name: KOGITO_DATAINDEX_WS_URL, value: "wss://kogito-task-console-drools.teleport.app.suncoast.systems/graphql" }
             - { name: KOGITO_JOBS_SERVICE_URL, value: "https://kogito-task-console-drools.teleport.app.suncoast.systems/jobs" }
+            - { name: QUARKUS_HTTP_CORS, value: "true" }
+            - { name: QUARKUS_HTTP_CORS_ORIGINS, value: "https://kogito-task-console-drools.teleport.app.suncoast.systems,https://kogito-console-drools.teleport.app.suncoast.systems,https://teleport.app.suncoast.systems" }
+            - { name: QUARKUS_HTTP_CORS_HEADERS, value: "authorization,content-type,accept,origin,referer,cache-control,pragma" }
+            - { name: QUARKUS_HTTP_CORS_METHODS, value: "GET,POST,PUT,DELETE,OPTIONS,PATCH" }
+            - { name: QUARKUS_HTTP_CORS_ACCESS_CONTROL_ALLOW_CREDENTIALS, value: "true" }
           envFrom:
             - configMapRef:
                 name: kogito-console-config

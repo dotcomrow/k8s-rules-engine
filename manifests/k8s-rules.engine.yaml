@@ -2852,6 +2852,76 @@ data:
           proxy_read_timeout 300s;
         }
 
+        location ~* \\.png$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type image/png always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.jpe?g$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type image/jpeg always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.gif$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type image/gif always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.webp$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type image/webp always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.ico$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type image/x-icon always;
+          proxy_read_timeout 300s;
+        }
+
         location ~* \\.woff2$ {
           proxy_pass http://console_ui;
           proxy_http_version 1.1;
@@ -2979,6 +3049,10 @@ data:
           proxy_set_header X-Forwarded-Proto $scheme;
           proxy_set_header X-Forwarded-Host $host;
           proxy_set_header Authorization "";
+          proxy_set_header Accept-Encoding "";
+          sub_filter_types text/html;
+          sub_filter_once on;
+          sub_filter '</head>' '<style id="kogito-pf-override">:root{--pf-global--BackgroundColor--light-300:#f0f0f0;--pf-global--BackgroundColor--dark-100:#151515;--pf-global--BackgroundColor--dark-300:#212427;} .pf-c-page{background-color:var(--pf-global--BackgroundColor--light-300);} .pf-c-page__header{background-color:var(--pf-global--BackgroundColor--dark-100);} .pf-c-page__sidebar{background-color:var(--pf-global--BackgroundColor--dark-300);}</style></head>';
           proxy_read_timeout 300s;
         }
 
@@ -3054,6 +3128,76 @@ data:
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $scheme;
           proxy_set_header X-Forwarded-Host $host;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.png$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type image/png always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.jpe?g$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type image/jpeg always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.gif$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type image/gif always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.webp$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type image/webp always;
+          proxy_read_timeout 300s;
+        }
+
+        location ~* \\.ico$ {
+          proxy_pass http://console_ui;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Host $host;
+          proxy_set_header Authorization "";
+          proxy_hide_header Content-Type;
+          add_header Content-Type image/x-icon always;
           proxy_read_timeout 300s;
         }
 

@@ -754,6 +754,53 @@ spec:
                     -s "requiredActions=[]" >/dev/null
                 fi
               }
+
+              get_client_uuid() {
+                local client_id="$1"
+                local client_uuid=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  client_uuid="$line"
+                  break
+                done < <($KCADM get clients -r "$REALM" -q "clientId=$client_id" \
+                  --fields id --format csv)
+                printf '%s' "$client_uuid"
+              }
+
+              ensure_client_roles() {
+                local client_uuid="$1"
+                local role_list="$2"
+
+                for role in $role_list; do
+                  if $KCADM get "clients/$client_uuid/roles/$role" -r "$REALM" >/dev/null 2>&1; then
+                    echo "✅ Client role exists: $role"
+                  else
+                    echo "Creating client role: $role"
+                    $KCADM create "clients/$client_uuid/roles" -r "$REALM" -s "name=$role" >/dev/null
+                  fi
+                done
+              }
+
+              assign_client_roles_to_user() {
+                local username="$1"
+                local client_id="$2"
+                local role_list="$3"
+
+                for role in $role_list; do
+                  if $KCADM add-roles -r "$REALM" --uusername "$username" \
+                    --cclientid "$client_id" --rolename "$role" >/dev/null 2>&1; then
+                    echo "✅ Assigned client role $role to $username on $client_id"
+                  else
+                    echo "Client role $role already assigned to $username on $client_id"
+                  fi
+                done
+              }
               for i in $(seq 1 30); do
                 if $KCADM config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
                   --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
@@ -814,6 +861,13 @@ spec:
               ensure_workbench_redirects "$WORKBENCH_CLIENT_ID"
               ensure_direct_access_grants "$WORKBENCH_CLIENT_ID"
               ensure_controller_user "$CONTROLLER_USER" "$CONTROLLER_PASSWORD"
+
+              WORKBENCH_CLIENT_UUID="$(get_client_uuid "$WORKBENCH_CLIENT_ID")"
+              if [ -z "$WORKBENCH_CLIENT_UUID" ] || [ "$WORKBENCH_CLIENT_UUID" = "id" ]; then
+                echo "❌ Keycloak client not found: $WORKBENCH_CLIENT_ID"
+                exit 1
+              fi
+              ensure_client_roles "$WORKBENCH_CLIENT_UUID" "$CONTROLLER_ROLE_LIST"
 
               KIE_CLIENT_UUID=""
               while IFS= read -r line; do
@@ -880,6 +934,8 @@ spec:
                   echo "Role $role already assigned to controller user $CONTROLLER_USER"
                 fi
               done
+
+              assign_client_roles_to_user "$CONTROLLER_USER" "$WORKBENCH_CLIENT_ID" "$CONTROLLER_ROLE_LIST"
           volumeMounts:
             - { name: keycloak-admin-env, mountPath: /shared }
 

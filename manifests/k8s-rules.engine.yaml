@@ -497,6 +497,9 @@ spec:
               ROLE_LIST="admin rest-all developer analyst manager process-admin user kie-server"
               WORKBENCH_PUBLIC_URL="https://workbench-drools.teleport.app.suncoast.systems"
               CONTROLLER_ROLE_LIST="admin rest-all kie-server"
+              CONTROLLER_EMAIL="${CONTROLLER_EMAIL:-drools-controller@internal.local}"
+              CONTROLLER_FIRST_NAME="${CONTROLLER_FIRST_NAME:-Drools}"
+              CONTROLLER_LAST_NAME="${CONTROLLER_LAST_NAME:-Controller}"
 
               if [ -z "${KIE_SERVER_SERVICE_CLIENT_ID:-}" ]; then
                 echo "❌ Missing KIE_SERVER_SERVICE_CLIENT_ID in keycloak-env.sh"
@@ -717,7 +720,11 @@ spec:
                   echo "Creating controller user $username"
                   $KCADM create users -r "$REALM" \
                     -s "username=$username" \
-                    -s "enabled=true" >/dev/null
+                    -s "enabled=true" \
+                    -s "email=$CONTROLLER_EMAIL" \
+                    -s "emailVerified=true" \
+                    -s "firstName=$CONTROLLER_FIRST_NAME" \
+                    -s "lastName=$CONTROLLER_LAST_NAME" >/dev/null
                 else
                   echo "Controller user $username already exists"
                 fi
@@ -740,6 +747,9 @@ spec:
                 if [ -n "$user_id" ] && [ "$user_id" != "id" ]; then
                   $KCADM update "users/$user_id" -r "$REALM" \
                     -s "enabled=true" \
+                    -s "email=$CONTROLLER_EMAIL" \
+                    -s "firstName=$CONTROLLER_FIRST_NAME" \
+                    -s "lastName=$CONTROLLER_LAST_NAME" \
                     -s "emailVerified=true" \
                     -s "requiredActions=[]" >/dev/null
                 fi

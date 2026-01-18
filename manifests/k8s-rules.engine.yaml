@@ -724,6 +724,25 @@ spec:
 
                 $KCADM set-password -r "$REALM" --username "$username" \
                   --new-password "$password" --temporary=false >/dev/null
+
+                user_id=""
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  user_id="$line"
+                  break
+                done < <($KCADM get users -r "$REALM" -q "username=$username" \
+                  --fields id --format csv)
+                if [ -n "$user_id" ] && [ "$user_id" != "id" ]; then
+                  $KCADM update "users/$user_id" -r "$REALM" \
+                    -s "enabled=true" \
+                    -s "emailVerified=true" \
+                    -s "requiredActions=[]" >/dev/null
+                fi
               }
               for i in $(seq 1 30); do
                 if $KCADM config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \

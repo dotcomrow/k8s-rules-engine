@@ -1503,6 +1503,30 @@ data:
 # KIE Workbench (Business Central) – Showcase image + redirect
 # =========================
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kie-workbench-niogit
+  namespace: drools
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kie-workbench-m2
+  namespace: drools
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 20Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1537,6 +1561,12 @@ spec:
           emptyDir: {}
         - name: vault-secrets
           emptyDir: {}
+        - name: workbench-niogit
+          persistentVolumeClaim:
+            claimName: kie-workbench-niogit
+        - name: workbench-m2
+          persistentVolumeClaim:
+            claimName: kie-workbench-m2
         - name: wildfly-oidc
           configMap:
             name: wildfly-oidc-config
@@ -1635,6 +1665,76 @@ spec:
               echo "export OIDC_KIE_SERVER_CLIENT_SECRET=\"$KIE_OIDC_SECRET\"" >> "$OIDC_ENV_FILE"
               echo "✅ OIDC client secret loaded for drools-kie-server"
 
+              GH_USER_JSON="$(vault kv get -format=json secret/k8s-rules-engine-github-packages-username 2>/dev/null || true)"
+              GH_USER="$(printf '%s' "$GH_USER_JSON" | jq -r '.data.data.value // empty')"
+              GH_TOKEN_JSON="$(vault kv get -format=json secret/k8s-rules-engine-github-packages-token 2>/dev/null || true)"
+              GH_TOKEN="$(printf '%s' "$GH_TOKEN_JSON" | jq -r '.data.data.value // empty')"
+              if [ -z "${GH_USER:-}" ] || [ -z "${GH_TOKEN:-}" ]; then
+                echo "❌ Missing GitHub Packages credentials in Vault"
+                exit 1
+              fi
+              mkdir -p /workbench-m2
+              cat > /workbench-m2/settings.xml <<EOF
+              <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                        xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+                <servers>
+                  <server>
+                    <id>github</id>
+                    <username>${GH_USER}</username>
+                    <password>${GH_TOKEN}</password>
+                  </server>
+                  <server>
+                    <id>guvnor-m2-repo</id>
+                    <username>${GH_USER}</username>
+                    <password>${GH_TOKEN}</password>
+                  </server>
+                  <server>
+                    <id>kie-server</id>
+                    <username>${GH_USER}</username>
+                    <password>${GH_TOKEN}</password>
+                  </server>
+                </servers>
+                <profiles>
+                  <profile>
+                    <id>github</id>
+                    <repositories>
+                      <repository>
+                        <id>github</id>
+                        <url>https://maven.pkg.github.com/dotcomrow/rules-packages</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </repository>
+                      <repository>
+                        <id>central</id>
+                        <url>https://repo1.maven.org/maven2/</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>false</enabled></snapshots>
+                      </repository>
+                    </repositories>
+                    <pluginRepositories>
+                      <pluginRepository>
+                        <id>github</id>
+                        <url>https://maven.pkg.github.com/dotcomrow/rules-packages</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </pluginRepository>
+                      <pluginRepository>
+                        <id>central</id>
+                        <url>https://repo1.maven.org/maven2/</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>false</enabled></snapshots>
+                      </pluginRepository>
+                    </pluginRepositories>
+                  </profile>
+                </profiles>
+                <activeProfiles>
+                  <activeProfile>github</activeProfile>
+                </activeProfiles>
+              </settings>
+              EOF
+              echo "✅ GitHub Packages Maven settings created"
+
               KIE_ENV_FILE="/shared/kie-users-env.sh"
               : > "$KIE_ENV_FILE"
               ADMIN_JSON="$(vault kv get -format=json secret/drools/admin 2>/dev/null || true)"
@@ -1656,6 +1756,8 @@ spec:
           volumeMounts:
             - name: vault-secrets
               mountPath: /shared
+            - name: workbench-m2
+              mountPath: /workbench-m2
         - name: vault-db-creds
           image: hashicorp/vault:1.15.4
           command: ["/bin/sh", "-c"]
@@ -1898,6 +2000,9 @@ spec:
                 -Dorg.uberfire.ext.security.management.keycloak.enabled=true
                 -Dorg.uberfire.ext.security.management.keycloak.authServer=https://auth.suncoast.systems
                 -Dorg.uberfire.ext.security.management.keycloak.use-resource-role-mappings=true
+                -Dorg.kie.maven.settings.custom=/opt/jboss/.m2/settings.xml
+                -Dorg.guvnor.m2repo.id=github
+                -Dorg.guvnor.m2repo.url=https://maven.pkg.github.com/dotcomrow/rules-packages
             - name: JAVA_OPTS_APPEND
               value: >-
                 -Djboss.logging.level.org.keycloak.adapters=DEBUG
@@ -1924,6 +2029,8 @@ spec:
             - { name: welcome-content,   mountPath: /opt/jboss/wildfly/welcome-content }
             - { name: vault-secrets,     mountPath: /vault-secrets }
             - { name: wildfly-modules,   mountPath: /opt/jboss/wildfly/modules }
+            - { name: workbench-niogit,  mountPath: /opt/jboss/.niogit }
+            - { name: workbench-m2,      mountPath: /opt/jboss/.m2 }
           readinessProbe:
             tcpSocket: { port: 8080 }
             initialDelaySeconds: 180
@@ -1995,6 +2102,8 @@ spec:
         - name: welcome-content
           emptyDir: {}
         - name: vault-secrets
+          emptyDir: {}
+        - name: kie-m2
           emptyDir: {}
         - name: wildfly-oidc
           configMap:
@@ -2086,6 +2195,76 @@ spec:
               fi
               echo "export OIDC_KIE_SERVER_CLIENT_SECRET=\"$KIE_OIDC_SECRET\"" >> "$OIDC_ENV_FILE"
 
+              GH_USER_JSON="$(vault kv get -format=json secret/k8s-rules-engine-github-packages-username 2>/dev/null || true)"
+              GH_USER="$(printf '%s' "$GH_USER_JSON" | jq -r '.data.data.value // empty')"
+              GH_TOKEN_JSON="$(vault kv get -format=json secret/k8s-rules-engine-github-packages-token 2>/dev/null || true)"
+              GH_TOKEN="$(printf '%s' "$GH_TOKEN_JSON" | jq -r '.data.data.value // empty')"
+              if [ -z "${GH_USER:-}" ] || [ -z "${GH_TOKEN:-}" ]; then
+                echo "❌ Missing GitHub Packages credentials in Vault"
+                exit 1
+              fi
+              mkdir -p /kie-m2
+              cat > /kie-m2/settings.xml <<EOF
+              <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                        xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+                <servers>
+                  <server>
+                    <id>github</id>
+                    <username>${GH_USER}</username>
+                    <password>${GH_TOKEN}</password>
+                  </server>
+                  <server>
+                    <id>guvnor-m2-repo</id>
+                    <username>${GH_USER}</username>
+                    <password>${GH_TOKEN}</password>
+                  </server>
+                  <server>
+                    <id>kie-server</id>
+                    <username>${GH_USER}</username>
+                    <password>${GH_TOKEN}</password>
+                  </server>
+                </servers>
+                <profiles>
+                  <profile>
+                    <id>github</id>
+                    <repositories>
+                      <repository>
+                        <id>github</id>
+                        <url>https://maven.pkg.github.com/dotcomrow/rules-packages</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </repository>
+                      <repository>
+                        <id>central</id>
+                        <url>https://repo1.maven.org/maven2/</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>false</enabled></snapshots>
+                      </repository>
+                    </repositories>
+                    <pluginRepositories>
+                      <pluginRepository>
+                        <id>github</id>
+                        <url>https://maven.pkg.github.com/dotcomrow/rules-packages</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </pluginRepository>
+                      <pluginRepository>
+                        <id>central</id>
+                        <url>https://repo1.maven.org/maven2/</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>false</enabled></snapshots>
+                      </pluginRepository>
+                    </pluginRepositories>
+                  </profile>
+                </profiles>
+                <activeProfiles>
+                  <activeProfile>github</activeProfile>
+                </activeProfiles>
+              </settings>
+              EOF
+              echo "✅ GitHub Packages Maven settings created"
+
               KIE_ENV_FILE="/shared/kie-users-env.sh"
               : > "$KIE_ENV_FILE"
               ADMIN_JSON="$(vault kv get -format=json secret/drools/admin 2>/dev/null || true)"
@@ -2107,6 +2286,8 @@ spec:
           volumeMounts:
             - name: vault-secrets
               mountPath: /shared
+            - name: kie-m2
+              mountPath: /kie-m2
         - name: configure-root-redirect
           image: quay.io/kiegroup/kie-server-showcase:latest
           command: ["/bin/sh","-c"]
@@ -2209,6 +2390,8 @@ spec:
                 -Dorg.kie.server.controller="${KIE_SERVER_CONTROLLER}" \
                 -Dorg.kie.server.controller.user="${KIE_SERVER_CONTROLLER_USER}" \
                 -Dorg.kie.server.controller.pwd="${KIE_SERVER_CONTROLLER_PWD}" \
+                -Dorg.kie.server.repo="${KIE_MAVEN_REPO}" \
+                -Dorg.kie.maven.settings.custom="/opt/jboss/.m2/settings.xml" \
                 -c standalone-full-kie-server.xml
           ports:
             - { containerPort: 8080 }
@@ -2217,13 +2400,14 @@ spec:
             - { name: KIE_SERVER_ID,       value: "kie-server" }
             - { name: KIE_SERVER_LOCATION, value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server" }
             - { name: KIE_SERVER_CONTROLLER, value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller" }
-            - { name: KIE_MAVEN_REPO,     value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/maven2" }
+            - { name: KIE_MAVEN_REPO,     value: "https://maven.pkg.github.com/dotcomrow/rules-packages" }
             - { name: KIE_SERVER_EXTENSIONS, value: "BRM,DMN,BPM,CaseMgmt,Planner" }
           volumeMounts:
             - { name: kieserver-config,  mountPath: /opt/jboss/wildfly/standalone/configuration }
             - { name: welcome-content,   mountPath: /opt/jboss/wildfly/welcome-content }
             - { name: vault-secrets,     mountPath: /vault-secrets }
             - { name: wildfly-modules,   mountPath: /opt/jboss/wildfly/modules }
+            - { name: kie-m2,            mountPath: /opt/jboss/.m2 }
           readinessProbe:
             tcpSocket: { port: 8080 }
             initialDelaySeconds: 120

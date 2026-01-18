@@ -386,6 +386,24 @@ end
 | >= 65 | < 100 | 10 |
 | < 65 | >= 500 | 5 |
 
+## GitHub Packages Maven Flow
+
+### Runtime credentials (Vault)
+- Token: `secret/k8s-rules-engine-github-packages-token`
+- Username: `secret/k8s-rules-engine-github-packages-username`
+- Both secrets use the key `value`.
+
+### Repo URL
+`https://maven.pkg.github.com/dotcomrow/rules-packages`
+
+### Naming scheme
+- `groupId`: `systems.suncoast.rules.<domain>`
+- `artifactId`: `<app>-rules`
+- `containerId`: `<domain>-<app>`
+
+### App-of-apps scaffolding
+See `scaffolding/rules-apps` for the ApplicationSet and per-app registration Job template.
+
 ## Support and Resources
 
 - **Drools Documentation**: https://docs.drools.org/

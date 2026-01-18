@@ -246,9 +246,12 @@ spec:
               vault policy write "keycloak-admin-job" - <<'EOF'
               path "secret/data/keycloak/admin"                      { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-drools-workbench"  { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-drools-kie-server" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-secret-drools-kie-server" { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-drools-kie-server-service" { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-kogito-console"    { capabilities = ["read"] }
               path "secret/data/drools/admin"                        { capabilities = ["read"] }
+              path "secret/data/drools/kie-user"                     { capabilities = ["read"] }
               EOF
 
               vault write auth/kubernetes/role/drools \
@@ -478,10 +481,32 @@ spec:
                 exit 1
               fi
 
+              KIE_SERVER_CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-kie-server)"
+              KIE_SERVER_CLIENT_ID="$(printf '%s' "$KIE_SERVER_CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "$KIE_SERVER_CLIENT_ID" ]; then
+                echo "❌ Missing drools-kie-server client id in Vault"
+                exit 1
+              fi
+
+              KIE_SERVER_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server)"
+              KIE_SERVER_CLIENT_SECRET="$(printf '%s' "$KIE_SERVER_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "$KIE_SERVER_CLIENT_SECRET" ]; then
+                echo "❌ Missing drools-kie-server client secret in Vault"
+                exit 1
+              fi
+
               KOGITO_CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-kogito-console)"
               KOGITO_CLIENT_ID="$(printf '%s' "$KOGITO_CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
               if [ -z "$KOGITO_CLIENT_ID" ]; then
                 echo "❌ Missing kogito-console client id in Vault"
+                exit 1
+              fi
+
+              KIE_USER_JSON="$(vault kv get -format=json secret/drools/kie-user)"
+              KIE_SERVER_USER="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.username // empty')"
+              KIE_SERVER_PASSWORD="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.password // empty')"
+              if [ -z "$KIE_SERVER_USER" ] || [ -z "$KIE_SERVER_PASSWORD" ]; then
+                echo "❌ Missing drools kie-user credentials in Vault"
                 exit 1
               fi
 
@@ -492,6 +517,10 @@ spec:
               export CONTROLLER_PASSWORD="${CONTROLLER_PASS}"
               export WORKBENCH_CLIENT_ID="${CLIENT_ID}"
               export KIE_SERVER_SERVICE_CLIENT_ID="${KIE_CLIENT_ID}"
+              export KIE_SERVER_CLIENT_ID="${KIE_SERVER_CLIENT_ID}"
+              export KIE_SERVER_CLIENT_SECRET="${KIE_SERVER_CLIENT_SECRET}"
+              export KIE_SERVER_USER="${KIE_SERVER_USER}"
+              export KIE_SERVER_PASSWORD="${KIE_SERVER_PASSWORD}"
               export KOGITO_CONSOLE_CLIENT_ID="${KOGITO_CLIENT_ID}"
               EOF
           volumeMounts:
@@ -517,9 +546,16 @@ spec:
               CONTROLLER_EMAIL="${CONTROLLER_EMAIL:-drools-controller@internal.local}"
               CONTROLLER_FIRST_NAME="${CONTROLLER_FIRST_NAME:-Drools}"
               CONTROLLER_LAST_NAME="${CONTROLLER_LAST_NAME:-Controller}"
+              KIE_SERVER_EMAIL="${KIE_SERVER_EMAIL:-drools-kie-server@internal.local}"
+              KIE_SERVER_FIRST_NAME="${KIE_SERVER_FIRST_NAME:-KIE}"
+              KIE_SERVER_LAST_NAME="${KIE_SERVER_LAST_NAME:-Server}"
 
               if [ -z "${KIE_SERVER_SERVICE_CLIENT_ID:-}" ]; then
                 echo "❌ Missing KIE_SERVER_SERVICE_CLIENT_ID in keycloak-env.sh"
+                exit 1
+              fi
+              if [ -z "${KIE_SERVER_CLIENT_ID:-}" ] || [ -z "${KIE_SERVER_CLIENT_SECRET:-}" ]; then
+                echo "❌ Missing KIE_SERVER_CLIENT_ID or KIE_SERVER_CLIENT_SECRET in keycloak-env.sh"
                 exit 1
               fi
               if [ -z "${KOGITO_CONSOLE_CLIENT_ID:-}" ]; then
@@ -528,6 +564,10 @@ spec:
               fi
               if [ -z "${CONTROLLER_USER:-}" ] || [ -z "${CONTROLLER_PASSWORD:-}" ]; then
                 echo "❌ Missing CONTROLLER_USER in keycloak-env.sh"
+                exit 1
+              fi
+              if [ -z "${KIE_SERVER_USER:-}" ] || [ -z "${KIE_SERVER_PASSWORD:-}" ]; then
+                echo "❌ Missing KIE_SERVER_USER or KIE_SERVER_PASSWORD in keycloak-env.sh"
                 exit 1
               fi
 
@@ -720,6 +760,22 @@ spec:
                 echo "Enabled direct access grants for $client_id"
               }
 
+              ensure_client_secret() {
+                local client_id="$1"
+                local client_secret="$2"
+                local client_uuid=""
+
+                client_uuid="$(get_client_uuid "$client_id")"
+                if [ -z "$client_uuid" ] || [ "$client_uuid" = "id" ]; then
+                  echo "❌ Keycloak client not found: $client_id"
+                  exit 1
+                fi
+
+                $KCADM update "clients/$client_uuid" -r "$REALM" \
+                  -s "clientAuthenticatorType=client-secret" \
+                  -s "secret=$client_secret" >/dev/null 2>&1 || true
+              }
+
               ensure_controller_user() {
                 local username="$1"
                 local password="$2"
@@ -771,6 +827,62 @@ spec:
                     -s "email=$CONTROLLER_EMAIL" \
                     -s "firstName=$CONTROLLER_FIRST_NAME" \
                     -s "lastName=$CONTROLLER_LAST_NAME" \
+                    -s "emailVerified=true" \
+                    -s "requiredActions=[]" >/dev/null
+                fi
+              }
+
+              ensure_kie_user() {
+                local username="$1"
+                local password="$2"
+                local user_id=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  user_id="$line"
+                  break
+                done < <($KCADM get users -r "$REALM" -q "username=$username" \
+                  --fields id --format csv)
+
+                if [ -z "$user_id" ] || [ "$user_id" = "id" ]; then
+                  echo "Creating KIE server user $username"
+                  $KCADM create users -r "$REALM" \
+                    -s "username=$username" \
+                    -s "enabled=true" \
+                    -s "email=$KIE_SERVER_EMAIL" \
+                    -s "emailVerified=true" \
+                    -s "firstName=$KIE_SERVER_FIRST_NAME" \
+                    -s "lastName=$KIE_SERVER_LAST_NAME" >/dev/null
+                else
+                  echo "KIE server user $username already exists"
+                fi
+
+                $KCADM set-password -r "$REALM" --username "$username" \
+                  --new-password "$password" --temporary=false >/dev/null
+
+                user_id=""
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  user_id="$line"
+                  break
+                done < <($KCADM get users -r "$REALM" -q "username=$username" \
+                  --fields id --format csv)
+                if [ -n "$user_id" ] && [ "$user_id" != "id" ]; then
+                  $KCADM update "users/$user_id" -r "$REALM" \
+                    -s "enabled=true" \
+                    -s "email=$KIE_SERVER_EMAIL" \
+                    -s "firstName=$KIE_SERVER_FIRST_NAME" \
+                    -s "lastName=$KIE_SERVER_LAST_NAME" \
                     -s "emailVerified=true" \
                     -s "requiredActions=[]" >/dev/null
                 fi
@@ -883,7 +995,10 @@ spec:
               ensure_client_roles_mapper "$KOGITO_CONSOLE_CLIENT_ID"
               ensure_workbench_redirects "$WORKBENCH_CLIENT_ID"
               ensure_direct_access_grants "$WORKBENCH_CLIENT_ID"
+              ensure_direct_access_grants "$KIE_SERVER_CLIENT_ID"
+              ensure_client_secret "$KIE_SERVER_CLIENT_ID" "$KIE_SERVER_CLIENT_SECRET"
               ensure_controller_user "$CONTROLLER_USER" "$CONTROLLER_PASSWORD"
+              ensure_kie_user "$KIE_SERVER_USER" "$KIE_SERVER_PASSWORD"
 
               WORKBENCH_CLIENT_UUID="$(get_client_uuid "$WORKBENCH_CLIENT_ID")"
               if [ -z "$WORKBENCH_CLIENT_UUID" ] || [ "$WORKBENCH_CLIENT_UUID" = "id" ]; then
@@ -955,6 +1070,14 @@ spec:
                   echo "✅ Assigned role $role to controller user $CONTROLLER_USER"
                 else
                   echo "Role $role already assigned to controller user $CONTROLLER_USER"
+                fi
+              done
+
+              for role in $CONTROLLER_ROLE_LIST; do
+                if $KCADM add-roles -r "$REALM" --uusername "$KIE_SERVER_USER" --rolename "$role" >/dev/null 2>&1; then
+                  echo "✅ Assigned role $role to KIE server user $KIE_SERVER_USER"
+                else
+                  echo "Role $role already assigned to KIE server user $KIE_SERVER_USER"
                 fi
               done
 
@@ -1739,6 +1862,15 @@ spec:
               if [ -f /vault-secrets/oidc-env.sh ]; then
                 # shellcheck disable=SC1091
                 . /vault-secrets/oidc-env.sh
+              fi
+
+              if [ -f /vault-secrets/kie-users-env.sh ]; then
+                # shellcheck disable=SC1091
+                . /vault-secrets/kie-users-env.sh
+                if [ -n "${KIE_SERVER_USER:-}" ] && [ -n "${KIE_SERVER_PWD:-}" ]; then
+                  JAVA_OPTS="$JAVA_OPTS -Dorg.kie.server.user=${KIE_SERVER_USER} -Dorg.kie.server.pwd=${KIE_SERVER_PWD}"
+                  export JAVA_OPTS
+                fi
               fi
               
               echo "🚀 Starting KIE Workbench..."

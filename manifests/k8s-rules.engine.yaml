@@ -2620,7 +2620,10 @@ data:
       . /vault-secrets/kogito-console-env.sh
     fi
 
+    KOGITO_HOME="${KOGITO_HOME:-/home/kogito}"
+
     for candidate in \
+      "${KOGITO_HOME}/kogito-app-launch.sh" \
       /usr/local/bin/run.sh \
       /usr/local/bin/entrypoint.sh \
       /docker-entrypoint.sh \

@@ -762,7 +762,7 @@ spec:
               enable_direct_grant_flow() {
                 local realm="$1"
                 local current=""
-                current="$($KCADM get "realms/$realm" --fields directGrantFlow --format csv | awk -F, 'NR==2{print $1}' | tr -d '\r"')"
+                current="$($KCADM get "realms/$realm" --fields directGrantFlow --format csv | sed -n '2{s/\r//;s/\"//g;s/,.*//;p;}')"
                 if [ "$current" != "disabled-direct-grant" ] && [ -n "$current" ]; then
                   echo "Direct grant flow already enabled for $realm: $current"
                   return 0
@@ -1181,7 +1181,7 @@ data:
     embed-server --std-out=echo
     batch
     /subsystem=undertow/configuration=filter/expression-filter=redirect-root:add(expression="path('/') -> redirect('/business-central/')")
-    /subsystem=undertow/configuration=filter/expression-filter=deny-basic-noncontroller:add(expression="not path-prefix('/business-central/rest/controller') and not path-prefix('/business-central/maven2') and regex['^Basic '](%{i,Authorization}) -> response-code(403)")
+    /subsystem=undertow/configuration=filter/expression-filter=deny-basic-noncontroller:add(expression="not path-prefix('/business-central/rest/controller') and not path-prefix('/business-central/maven2') and regex('^Basic\\s')(%{i,Authorization}) -> response-code(403)")
     /subsystem=undertow/server=default-server/host=default-host/filter-ref=redirect-root:add
     /subsystem=undertow/server=default-server/host=default-host/filter-ref=deny-basic-noncontroller:add
     /subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=proxy-address-forwarding,value=true)

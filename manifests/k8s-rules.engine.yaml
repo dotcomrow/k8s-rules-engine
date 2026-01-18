@@ -1584,7 +1584,7 @@ spec:
               echo "export OIDC_KIE_SERVER_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
               echo "export OIDC_KIE_SERVER_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_CONFIDENTIAL="false"' >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_KIE_SERVER_BEARER_ONLY="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
 
               REALM_JSON="$(curl -fsSL "$OIDC_AUTH_URL/realms/$OIDC_REALM")"
@@ -1692,7 +1692,7 @@ spec:
               echo "export OIDC_KIE_SERVER_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
               echo "export OIDC_KIE_SERVER_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_CONFIDENTIAL="false"' >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_KIE_SERVER_BEARER_ONLY="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
 
               REALM_JSON="$(curl -fsSL "$OIDC_AUTH_URL/realms/$OIDC_REALM")"
@@ -2040,7 +2040,7 @@ spec:
               echo "export OIDC_KIE_SERVER_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
               echo "export OIDC_KIE_SERVER_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_KIE_SERVER_BEARER_ONLY="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
 
               REALM_JSON="$(curl -fsSL "$OIDC_AUTH_URL/realms/$OIDC_REALM")"
               OIDC_PUBLIC_KEY="$(printf '%s' "$REALM_JSON" | jq -r '.public_key // empty')"

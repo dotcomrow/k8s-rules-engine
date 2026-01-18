@@ -240,6 +240,8 @@ spec:
               path "secret/data/keycloak-client-secret-drools-kie-server-service" { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-kogito-console"     { capabilities = ["read"] }
               path "secret/data/keycloak-client-secret-kogito-console" { capabilities = ["read"] }
+              path "secret/data/k8s-rules-engine-github-packages-username" { capabilities = ["read"] }
+              path "secret/data/k8s-rules-engine-github-packages-token" { capabilities = ["read"] }
               path "secret/data/vaultadmin"                        { capabilities = ["read"] }
               EOF
 

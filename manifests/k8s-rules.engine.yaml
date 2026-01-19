@@ -2231,10 +2231,16 @@ spec:
               value: "https://auth.suncoast.systems"
             - name: OIDC_REALM
               value: "internal"
+            - name: POSTSYNC_ENABLED
+              value: "false"
           args:
             - |
               set -euo pipefail
               apk add --no-cache curl jq ca-certificates
+              if [ "${POSTSYNC_ENABLED:-false}" != "true" ]; then
+                echo "PostSync disabled; skipping restarts/imports."
+                exit 0
+              fi
 
               restart_deploy() {
                 name="$1"

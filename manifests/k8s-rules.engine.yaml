@@ -1249,7 +1249,6 @@ data:
     # Ensure CGLIB is available to deployments (XStream uses it for DRL assets).
     if (outcome == success) of /subsystem=ee:read-attribute(name=global-modules)
       /subsystem=ee:list-add(name=global-modules,value={name="net.sf.cglib"})
-      /subsystem=ee:list-add(name=global-modules,value={name="org.drools.compiler"})
     end-if
     stop-embedded-server
   configure-oidc.sh: |
@@ -2001,24 +2000,9 @@ spec:
               echo "Downloading ${JAR}..."
               curl -fsSL "$URL" -o "/target/${JAR}"
               echo "drools-compiler downloaded"
-              MODULE_DIR="/wildfly-modules/system/layers/base/org/drools/compiler/main"
-              mkdir -p "$MODULE_DIR"
-              cp "/target/${JAR}" "${MODULE_DIR}/${JAR}"
-              cat > "${MODULE_DIR}/module.xml" << EOF
-              <?xml version="1.0" encoding="UTF-8"?>
-              <module xmlns="urn:jboss:module:1.9" name="org.drools.compiler">
-                <resources>
-                  <resource-root path="${JAR}"/>
-                </resources>
-                <dependencies>
-                  <module name="org.slf4j"/>
-                </dependencies>
-              </module>
-              EOF
-              echo "drools-compiler module installed"
+              echo "drools-compiler staged for Workbench injection"
           volumeMounts:
             - { name: workbench-extra-libs, mountPath: /target }
-            - { name: wildfly-modules, mountPath: /wildfly-modules }
         - name: configure-oidc
           image: quay.io/kiegroup/business-central-workbench-showcase:7.74.1.Final
           command: ["/bin/sh","-c"]

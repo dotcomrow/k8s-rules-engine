@@ -336,6 +336,32 @@ roleRef:
   kind: Role
   name: pod-reader-drools
 ---
+# RBAC for ArgoCD PostSync hook (rollout + import)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: drools-workbench-rollout
+  namespace: drools
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["kie-workbench", "kie-server", "kogito-decision-service"]
+    verbs: ["get", "watch", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: drools-workbench-rollout
+  namespace: drools
+subjects:
+  - kind: ServiceAccount
+    name: drools-workbench
+    namespace: drools
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: drools-workbench-rollout
+---
 
 apiVersion: v1
 kind: Namespace
@@ -1515,6 +1541,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: kie-workbench-niogit
   namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   accessModes: ["ReadWriteOnce"]
   storageClassName: longhorn
@@ -1527,6 +1555,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: kie-workbench-m2
   namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   accessModes: ["ReadWriteOnce"]
   storageClassName: longhorn
@@ -1551,6 +1581,9 @@ spec:
   template:
     metadata:
       labels: { app: kie-workbench }
+      annotations:
+        checksum/workbench-redirect-cli: "6ee589478b46ef3f10b58e9bca72d7e7796aae3cacd5f0d92bb495d910b165e0"
+        checksum/wildfly-oidc-config: "bf60aabcfce5df2557e5e69e84f9c9a5ace624de640350d2e9f5c954ba74137a"
     spec:
       serviceAccountName: drools-workbench
       securityContext:
@@ -2073,6 +2106,7 @@ spec:
               value: >-
                 -Xms512m -Xmx2048m -Dorg.kie.workbench.profile=FULL
                 -Dorg.uberfire.nio.git.daemon.host=0.0.0.0
+                -Dorg.uberfire.nio.git.dir=/opt/jboss/.niogit
                 -Dorg.uberfire.nio.git.defaultbranch=prod
                 -Dorg.uberfire.nio.git.default.branch=prod
                 -Dorg.uberfire.nio.git.defaultBranch=prod
@@ -2160,6 +2194,202 @@ spec:
   type: ClusterIP
 
 # =========================
+# Workbench PostSync import (optional)
+# =========================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workbench-rules-import
+  namespace: drools
+data:
+  projects.json: |
+    []
+  README.txt: |
+    Provide a JSON array of projects to import after ArgoCD sync.
+    Fields: space, name, gitUrl, branch (optional), username (optional), password (optional).
+    Example:
+    [
+      {"space":"rules","name":"example-rules","gitUrl":"https://github.com/your-org/example-rules.git","branch":"prod"}
+    ]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: workbench-postsync
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels: { app: workbench-postsync }
+    spec:
+      serviceAccountName: drools-workbench
+      restartPolicy: Never
+      containers:
+        - name: rollout-and-import
+          image: alpine/k8s:1.31.4
+          command: ["/bin/sh","-c"]
+          env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: WORKBENCH_URL
+              value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central"
+            - name: PROJECTS_JSON
+              value: "/config/projects.json"
+            - name: VAULT_ADDR
+              value: "http://vault.vault.svc.cluster.local:8200"
+            - name: OIDC_AUTH_URL
+              value: "https://auth.suncoast.systems"
+            - name: OIDC_REALM
+              value: "internal"
+          args:
+            - |
+              set -euo pipefail
+              apk add --no-cache curl jq ca-certificates
+
+              restart_deploy() {
+                name="$1"
+                timeout="${2:-10m}"
+                if kubectl -n "$NAMESPACE" get deployment "$name" >/dev/null 2>&1; then
+                  echo "Restarting deployment/$name..."
+                  kubectl -n "$NAMESPACE" rollout restart "deployment/$name"
+                  kubectl -n "$NAMESPACE" wait --for=condition=available --timeout="$timeout" "deployment/$name"
+                else
+                  echo "deployment/$name not found; skipping."
+                fi
+              }
+
+              restart_deploy "kie-server" "10m"
+              restart_deploy "kogito-decision-service" "10m"
+              restart_deploy "kie-workbench" "15m"
+
+              if [ ! -s "$PROJECTS_JSON" ]; then
+                echo "No rules project imports configured; skipping."
+                exit 0
+              fi
+
+              if ! jq -e 'type == "array"' "$PROJECTS_JSON" >/dev/null 2>&1; then
+                echo "projects.json must be a JSON array"
+                exit 1
+              fi
+
+              if [ "$(jq 'length' "$PROJECTS_JSON")" -eq 0 ]; then
+                echo "projects.json is empty; skipping import."
+                exit 0
+              fi
+
+              SA_JWT="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+              LOGIN_PAYLOAD="$(printf '{"role":"drools","jwt":"%s"}' "$SA_JWT")"
+              VAULT_TOKEN="$(curl -fsSL -H 'Content-Type: application/json' --data "$LOGIN_PAYLOAD" "$VAULT_ADDR/v1/auth/kubernetes/login" | jq -r '.auth.client_token')"
+              if [ -z "${VAULT_TOKEN:-}" ] || [ "$VAULT_TOKEN" = "null" ]; then
+                echo "Vault login failed"
+                exit 1
+              fi
+
+              ADMIN_JSON="$(curl -fsSL -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/secret/data/drools/admin")"
+              ADMIN_USER="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.username // empty')"
+              ADMIN_PASS="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.password // empty')"
+              if [ -z "${ADMIN_USER:-}" ] || [ -z "${ADMIN_PASS:-}" ]; then
+                echo "Missing admin credentials in Vault"
+                exit 1
+              fi
+
+              OIDC_ID_JSON="$(curl -fsSL -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/secret/data/keycloak-client-id-drools-workbench")"
+              OIDC_CLIENT_ID="$(printf '%s' "$OIDC_ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              OIDC_SECRET_JSON="$(curl -fsSL -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/secret/data/keycloak-client-secret-drools-workbench")"
+              OIDC_CLIENT_SECRET="$(printf '%s' "$OIDC_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "${OIDC_CLIENT_ID:-}" ] || [ -z "${OIDC_CLIENT_SECRET:-}" ]; then
+                echo "Missing OIDC client credentials in Vault"
+                exit 1
+              fi
+
+              TOKEN_URL="${OIDC_AUTH_URL}/realms/${OIDC_REALM}/protocol/openid-connect/token"
+              TOKEN_RESPONSE="$(curl -fsSL -H 'Content-Type: application/x-www-form-urlencoded' \
+                -d "grant_type=password" \
+                -d "client_id=${OIDC_CLIENT_ID}" \
+                -d "client_secret=${OIDC_CLIENT_SECRET}" \
+                -d "username=${ADMIN_USER}" \
+                -d "password=${ADMIN_PASS}" \
+                "$TOKEN_URL")"
+              ACCESS_TOKEN="$(printf '%s' "$TOKEN_RESPONSE" | jq -r '.access_token // empty')"
+              if [ -z "${ACCESS_TOKEN:-}" ]; then
+                echo "Failed to obtain OIDC access token"
+                exit 1
+              fi
+              AUTH_HEADER="Authorization: Bearer ${ACCESS_TOKEN}"
+
+              ready=""
+              for i in $(seq 1 60); do
+                code="$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH_HEADER" "$WORKBENCH_URL/rest/spaces")"
+                if [ "$code" = "200" ]; then
+                  ready="yes"
+                  break
+                fi
+                echo "Waiting for Workbench API (status $code)..."
+                sleep 10
+              done
+              if [ -z "$ready" ]; then
+                echo "Workbench API not ready after waiting"
+                exit 1
+              fi
+
+              jq -c '.[]' "$PROJECTS_JSON" > /tmp/projects.jsonl
+              while read -r item; do
+                space="$(printf '%s' "$item" | jq -r '.space // empty')"
+                name="$(printf '%s' "$item" | jq -r '.name // empty')"
+                git_url="$(printf '%s' "$item" | jq -r '.gitUrl // empty')"
+                branch="$(printf '%s' "$item" | jq -r '.branch // empty')"
+                username="$(printf '%s' "$item" | jq -r '.username // empty')"
+                password="$(printf '%s' "$item" | jq -r '.password // empty')"
+
+                if [ -z "$space" ] || [ -z "$name" ] || [ -z "$git_url" ]; then
+                  echo "Skipping entry with missing space/name/gitUrl: $item"
+                  continue
+                fi
+
+                space_payload="$(jq -n --arg name "$space" --arg description "$space" '{name:$name, description:$description}')"
+                space_code="$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH_HEADER" -H 'Content-Type: application/json' -X POST "$WORKBENCH_URL/rest/spaces" -d "$space_payload")"
+                if [ "$space_code" != "201" ] && [ "$space_code" != "409" ]; then
+                  echo "Failed to ensure space $space (status $space_code)"
+                  exit 1
+                fi
+
+                project_payload="$(jq -n \
+                  --arg name "$name" \
+                  --arg description "$name" \
+                  --arg gitUrl "$git_url" \
+                  --arg branch "$branch" \
+                  --arg username "$username" \
+                  --arg password "$password" \
+                  '
+                  {name:$name, description:$description, gitURL:$gitUrl}
+                  + ( ($branch|length) > 0 ? {branch:$branch} : {} )
+                  + ( ($username|length) > 0 and ($password|length) > 0 ? {credentials:{username:$username,password:$password}} : {} )
+                  '
+                )"
+                project_code="$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH_HEADER" -H 'Content-Type: application/json' -X POST "$WORKBENCH_URL/rest/spaces/$space/projects" -d "$project_payload")"
+                if [ "$project_code" != "201" ] && [ "$project_code" != "200" ] && [ "$project_code" != "409" ]; then
+                  echo "Failed to import project $space/$name (status $project_code)"
+                  exit 1
+                fi
+                echo "Imported or verified project $space/$name"
+              done < /tmp/projects.jsonl
+          volumeMounts:
+            - { name: workbench-rules-import, mountPath: /config }
+      volumes:
+        - name: workbench-rules-import
+          configMap:
+            name: workbench-rules-import
+            items:
+              - { key: projects.json, path: projects.json, mode: 0444 }
+
+# =========================
 # KIE Server – Showcase image + redirect
 # =========================
 ---
@@ -2178,6 +2408,9 @@ spec:
   template:
     metadata:
       labels: { app: kie-server }
+      annotations:
+        checksum/kieserver-redirect-cli: "9f9b5053fb26c07ec71445587c99437de2c620d6058f0b4dcbd0deb6a0caf074"
+        checksum/wildfly-oidc-config-kieserver: "437ad4a3a3aafe6e5ccb6b5e8124974c98d6d860f1f58b332008d9d06c2a4f69"
     spec:
       serviceAccountName: drools-kie-server
       volumes:

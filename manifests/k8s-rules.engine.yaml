@@ -2003,6 +2003,82 @@ spec:
               echo "drools-compiler staged for Workbench injection"
           volumeMounts:
             - { name: workbench-extra-libs, mountPath: /target }
+        - name: build-workbench-jdt-core
+          image: maven:3.9.7-eclipse-temurin-11
+          command: ["/bin/sh","-c"]
+          env:
+            - name: JDT_CORE_VERSION
+              value: "3.18.0"
+          args:
+            - |
+              set -euo pipefail
+              WORKDIR="/tmp/jdt-core-shaded"
+              mkdir -p "$WORKDIR"
+              cat > "$WORKDIR/pom.xml" <<EOF
+              <project xmlns="http://maven.apache.org/POM/4.0.0"
+                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                       xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>org.drools</groupId>
+                <artifactId>jdt-core-shaded</artifactId>
+                <version>${JDT_CORE_VERSION}</version>
+                <dependencies>
+                  <dependency>
+                    <groupId>org.eclipse.jdt</groupId>
+                    <artifactId>org.eclipse.jdt.core</artifactId>
+                    <version>${JDT_CORE_VERSION}</version>
+                  </dependency>
+                </dependencies>
+                <build>
+                  <plugins>
+                    <plugin>
+                      <groupId>org.apache.maven.plugins</groupId>
+                      <artifactId>maven-shade-plugin</artifactId>
+                      <version>3.5.0</version>
+                      <executions>
+                        <execution>
+                          <phase>package</phase>
+                          <goals>
+                            <goal>shade</goal>
+                          </goals>
+                          <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <filters>
+                              <filter>
+                                <artifact>*:*</artifact>
+                                <excludes>
+                                  <exclude>META-INF/*.SF</exclude>
+                                  <exclude>META-INF/*.DSA</exclude>
+                                  <exclude>META-INF/*.RSA</exclude>
+                                </excludes>
+                              </filter>
+                            </filters>
+                            <artifactSet>
+                              <includes>
+                                <include>org.eclipse.jdt:org.eclipse.jdt.core</include>
+                              </includes>
+                            </artifactSet>
+                            <relocations>
+                              <relocation>
+                                <pattern>org.eclipse.jdt</pattern>
+                                <shadedPattern>org.drools.compiler.shade.org.eclipse.jdt</shadedPattern>
+                              </relocation>
+                            </relocations>
+                          </configuration>
+                        </execution>
+                      </executions>
+                    </plugin>
+                  </plugins>
+                </build>
+              </project>
+              EOF
+              cd "$WORKDIR"
+              mvn -q -DskipTests package
+              JAR="jdt-core-shaded-${JDT_CORE_VERSION}.jar"
+              cp "$WORKDIR/target/${JAR}" "/target/${JAR}"
+              echo "jdt-core shaded jar staged for Workbench injection: ${JAR}"
+          volumeMounts:
+            - { name: workbench-extra-libs, mountPath: /target }
         - name: configure-oidc
           image: quay.io/kiegroup/business-central-workbench-showcase:7.74.1.Final
           command: ["/bin/sh","-c"]
@@ -2061,19 +2137,19 @@ spec:
                 fi
               fi
 
-              DROOLS_VERSION="${DROOLS_VERSION:-7.74.1.Final}"
               EXTRA_LIBS_DIR="/workbench-extra-libs"
-              DROOLS_JAR="${EXTRA_LIBS_DIR}/drools-compiler-${DROOLS_VERSION}.jar"
               BC_LIB_DIR="/opt/jboss/wildfly/standalone/deployments/business-central.war/WEB-INF/lib"
-              if [ -f "$DROOLS_JAR" ]; then
-                if [ -d "$BC_LIB_DIR" ]; then
-                  if [ ! -f "${BC_LIB_DIR}/drools-compiler-${DROOLS_VERSION}.jar" ]; then
-                    echo "Injecting drools-compiler into business-central libs..."
-                    cp "$DROOLS_JAR" "$BC_LIB_DIR/"
+              if [ -d "$BC_LIB_DIR" ]; then
+                for jar in "$EXTRA_LIBS_DIR"/*.jar; do
+                  [ -f "$jar" ] || continue
+                  base="$(basename "$jar")"
+                  if [ ! -f "$BC_LIB_DIR/$base" ]; then
+                    echo "Injecting ${base} into business-central libs..."
+                    cp "$jar" "$BC_LIB_DIR/"
                   fi
-                else
-                  echo "WARN: business-central.war not exploded; skipping drools-compiler injection"
-                fi
+                done
+              else
+                echo "WARN: business-central.war not exploded; skipping extra lib injection"
               fi
               
               echo "🚀 Starting KIE Workbench..."

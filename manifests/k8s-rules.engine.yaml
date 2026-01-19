@@ -1980,6 +1980,9 @@ spec:
                 <resources>
                   <resource-root path="${JAR}"/>
                 </resources>
+                <dependencies>
+                  <module name="org.slf4j"/>
+                </dependencies>
               </module>
               EOF
               echo "drools-compiler module installed"

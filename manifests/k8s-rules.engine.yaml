@@ -459,7 +459,7 @@ spec:
           command: ["/bin/sh","-c"]
           args:
             - |
-              set -euo pipefail
+              set -eu
               apk add --no-cache jq curl
               export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
 
@@ -2011,7 +2011,7 @@ spec:
               value: "3.18.0"
           args:
             - |
-              set -euo pipefail
+              set -eu
               WORKDIR="/tmp/jdt-core-shaded"
               mkdir -p "$WORKDIR"
               cat > "$WORKDIR/pom.xml" <<EOF

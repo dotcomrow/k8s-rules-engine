@@ -1102,7 +1102,7 @@ metadata:
 data:
   enable-oidc.cli: |
     embed-server --std-out=echo --server-config=${env.WILDFLY_SERVER_CONFIG:standalone.xml}
-    # reloader-bump: 2026-01-14
+    # reloader-bump: 2026-01-19
     if (outcome != success) of /extension=org.keycloak.keycloak-adapter-subsystem:read-resource()
       /extension=org.keycloak.keycloak-adapter-subsystem:add()
     end-if
@@ -1125,13 +1125,13 @@ data:
       /subsystem=keycloak/secure-deployment=business-central.war/credential=secret:add(value="${env.OIDC_CLIENT_SECRET:}")
     end-if
     if (outcome != success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
-      /subsystem=keycloak/secure-deployment=kie-server.war:add(realm="${env.OIDC_KIE_SERVER_REALM:${env.OIDC_REALM}}",auth-server-url="${env.OIDC_KIE_SERVER_AUTH_URL:${env.OIDC_AUTH_URL}}",ssl-required=EXTERNAL,resource="${env.OIDC_KIE_SERVER_CLIENT_ID}",public-client=false,bearer-only=${env.OIDC_KIE_SERVER_BEARER_ONLY:true},principal-attribute=preferred_username)
+      /subsystem=keycloak/secure-deployment=kie-server.war:add(realm="${env.OIDC_KIE_SERVER_REALM:${env.OIDC_REALM}}",auth-server-url="${env.OIDC_KIE_SERVER_AUTH_URL:${env.OIDC_AUTH_URL}}",ssl-required=EXTERNAL,resource="${env.OIDC_KIE_SERVER_CLIENT_ID}",public-client=false,bearer-only=false,principal-attribute=preferred_username)
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
       /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=use-resource-role-mappings,value=false)
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
-      /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=enable-basic-auth,value=${env.OIDC_KIE_SERVER_ENABLE_BASIC_AUTH:true})
+      /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=enable-basic-auth,value=true)
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-attribute(name=verify-token-audience)
       /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=verify-token-audience,value=false)
@@ -1258,7 +1258,7 @@ metadata:
 data:
   enable-oidc.cli: |
     embed-server --std-out=echo --server-config=${env.WILDFLY_SERVER_CONFIG:standalone.xml}
-    # reloader-bump: 2026-01-14
+    # reloader-bump: 2026-01-19
     if (outcome != success) of /extension=org.keycloak.keycloak-adapter-subsystem:read-resource()
       /extension=org.keycloak.keycloak-adapter-subsystem:add()
     end-if
@@ -1281,13 +1281,13 @@ data:
       /subsystem=keycloak/secure-deployment=business-central.war/credential=secret:add(value="${env.OIDC_CLIENT_SECRET:}")
     end-if
     if (outcome != success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
-      /subsystem=keycloak/secure-deployment=kie-server.war:add(realm="${env.OIDC_KIE_SERVER_REALM:${env.OIDC_REALM}}",auth-server-url="${env.OIDC_KIE_SERVER_AUTH_URL:${env.OIDC_AUTH_URL}}",ssl-required=EXTERNAL,resource="${env.OIDC_KIE_SERVER_CLIENT_ID}",public-client=false,bearer-only=${env.OIDC_KIE_SERVER_BEARER_ONLY:true},principal-attribute=preferred_username)
+      /subsystem=keycloak/secure-deployment=kie-server.war:add(realm="${env.OIDC_KIE_SERVER_REALM:${env.OIDC_REALM}}",auth-server-url="${env.OIDC_KIE_SERVER_AUTH_URL:${env.OIDC_AUTH_URL}}",ssl-required=EXTERNAL,resource="${env.OIDC_KIE_SERVER_CLIENT_ID}",public-client=false,bearer-only=false,principal-attribute=preferred_username)
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
       /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=use-resource-role-mappings,value=false)
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-resource()
-      /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=enable-basic-auth,value=${env.OIDC_KIE_SERVER_ENABLE_BASIC_AUTH:true})
+      /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=enable-basic-auth,value=true)
     end-if
     if (outcome == success) of /subsystem=keycloak/secure-deployment=kie-server.war:read-attribute(name=verify-token-audience)
       /subsystem=keycloak/secure-deployment=kie-server.war:write-attribute(name=verify-token-audience,value=false)

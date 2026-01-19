@@ -2207,6 +2207,8 @@ spec:
   template:
     metadata:
       labels: { app: workbench-postsync }
+      annotations:
+        linkerd.io/inject: disabled
     spec:
       serviceAccountName: drools-workbench
       restartPolicy: Never
@@ -2240,7 +2242,29 @@ spec:
                 if kubectl -n "$NAMESPACE" get deployment "$name" >/dev/null 2>&1; then
                   echo "Restarting deployment/$name..."
                   kubectl -n "$NAMESPACE" rollout restart "deployment/$name"
-                  kubectl -n "$NAMESPACE" wait --for=condition=available --timeout="$timeout" "deployment/$name"
+                  case "$timeout" in
+                    *h) timeout_seconds=$(( ${timeout%h} * 3600 )) ;;
+                    *m) timeout_seconds=$(( ${timeout%m} * 60 )) ;;
+                    *s) timeout_seconds=${timeout%s} ;;
+                    *)  timeout_seconds=$timeout ;;
+                  esac
+                  start_ts="$(date +%s)"
+                  while true; do
+                    desired="$(kubectl -n "$NAMESPACE" get deployment "$name" -o jsonpath='{.spec.replicas}')"
+                    available="$(kubectl -n "$NAMESPACE" get deployment "$name" -o jsonpath='{.status.availableReplicas}')"
+                    desired="${desired:-0}"
+                    available="${available:-0}"
+                    if [ "$available" -ge "$desired" ]; then
+                      echo "deployment/$name ready ($available/$desired)"
+                      break
+                    fi
+                    now_ts="$(date +%s)"
+                    if [ $((now_ts - start_ts)) -ge "$timeout_seconds" ]; then
+                      echo "Timed out waiting for deployment/$name ($available/$desired)"
+                      exit 1
+                    fi
+                    sleep 5
+                  done
                 else
                   echo "deployment/$name not found; skipping."
                 fi

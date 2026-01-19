@@ -1942,7 +1942,7 @@ spec:
               URL="https://repo1.maven.org/maven2/cglib/cglib-nodep/${CGLIB_VERSION}/${JAR}"
               echo "Downloading cglib ${CGLIB_VERSION}..."
               curl -fsSL "$URL" -o "${TARGET_DIR}/${JAR}"
-              cat > "${TARGET_DIR}/module.xml" << 'EOF'
+              cat > "${TARGET_DIR}/module.xml" << EOF
               <?xml version="1.0" encoding="UTF-8"?>
               <module xmlns="urn:jboss:module:1.9" name="net.sf.cglib">
                 <resources>
@@ -1950,8 +1950,7 @@ spec:
                 </resources>
               </module>
               EOF
-              sed -i "s/\\${JAR}/${JAR}/g" "${TARGET_DIR}/module.xml"
-              echo "cglib module installed"
+              echo "✅ cglib module installed: ${JAR}"
           volumeMounts:
             - { name: wildfly-modules, mountPath: /target }
         - name: configure-oidc

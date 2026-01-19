@@ -2487,7 +2487,7 @@ spec:
             - { name: KIE_SERVER_ID,       value: "kie-server" }
             - { name: KIE_SERVER_LOCATION, value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server" }
             - { name: KIE_SERVER_CONTROLLER, value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller" }
-            - { name: KIE_MAVEN_REPO,     value: "https://maven.pkg.github.com/dotcomrow/rules-packages" }
+            - { name: KIE_MAVEN_REPO,     value: "/opt/jboss/.m2/repository" }
             - { name: KIE_SERVER_EXTENSIONS, value: "BRM,DMN,BPM,CaseMgmt,Planner" }
           volumeMounts:
             - { name: kieserver-config,  mountPath: /opt/jboss/wildfly/standalone/configuration }

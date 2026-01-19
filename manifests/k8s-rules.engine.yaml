@@ -1581,9 +1581,6 @@ spec:
   template:
     metadata:
       labels: { app: kie-workbench }
-      annotations:
-        checksum/workbench-redirect-cli: "6ee589478b46ef3f10b58e9bca72d7e7796aae3cacd5f0d92bb495d910b165e0"
-        checksum/wildfly-oidc-config: "bf60aabcfce5df2557e5e69e84f9c9a5ace624de640350d2e9f5c954ba74137a"
     spec:
       serviceAccountName: drools-workbench
       securityContext:
@@ -2408,9 +2405,6 @@ spec:
   template:
     metadata:
       labels: { app: kie-server }
-      annotations:
-        checksum/kieserver-redirect-cli: "9f9b5053fb26c07ec71445587c99437de2c620d6058f0b4dcbd0deb6a0caf074"
-        checksum/wildfly-oidc-config-kieserver: "437ad4a3a3aafe6e5ccb6b5e8124974c98d6d860f1f58b332008d9d06c2a4f69"
     spec:
       serviceAccountName: drools-kie-server
       volumes:

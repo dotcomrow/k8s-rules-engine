@@ -2940,6 +2940,40 @@ spec:
     - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
   type: ClusterIP
 
+---
+apiVersion: gravitee.io/v1alpha1
+kind: Application
+metadata:
+  name: rules-engine-internal
+  namespace: drools
+spec:
+  contextRef:
+    kind: ManagementContext
+    name: gravitee-default
+    namespace: k8s-api-gateway
+  name: rules-engine-internal
+  description: "Rules engine internal access"
+  settings:
+    app:
+      type: BACKEND_TO_BACKEND
+
+---
+apiVersion: gravitee.io/v1alpha1
+kind: Subscription
+metadata:
+  name: kie-server-jwt-internal
+  namespace: drools
+spec:
+  api:
+    kind: ApiV4Definition
+    name: kie-server
+    namespace: drools
+  application:
+    kind: Application
+    name: rules-engine-internal
+    namespace: drools
+  plan: jwt-internal
+
 # =========================
 # KIE Server Showcase (Decision façade)
 # =========================

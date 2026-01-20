@@ -1735,6 +1735,11 @@ spec:
                     <password>${GH_TOKEN}</password>
                   </server>
                   <server>
+                    <id>tool-use-policy</id>
+                    <username>${GH_USER}</username>
+                    <password>${GH_TOKEN}</password>
+                  </server>
+                  <server>
                     <id>guvnor-m2-repo</id>
                     <username>${GH_USER}</username>
                     <password>${GH_TOKEN}</password>
@@ -1756,6 +1761,12 @@ spec:
                         <snapshots><enabled>true</enabled></snapshots>
                       </repository>
                       <repository>
+                        <id>tool-use-policy</id>
+                        <url>https://maven.pkg.github.com/dotcomrow/drools-rule-app-tool-use-policy</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </repository>
+                      <repository>
                         <id>central</id>
                         <url>https://repo1.maven.org/maven2/</url>
                         <releases><enabled>true</enabled></releases>
@@ -1766,6 +1777,12 @@ spec:
                       <pluginRepository>
                         <id>github</id>
                         <url>https://maven.pkg.github.com/dotcomrow/rules-packages</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </pluginRepository>
+                      <pluginRepository>
+                        <id>tool-use-policy</id>
+                        <url>https://maven.pkg.github.com/dotcomrow/drools-rule-app-tool-use-policy</url>
                         <releases><enabled>true</enabled></releases>
                         <snapshots><enabled>true</enabled></snapshots>
                       </pluginRepository>
@@ -2634,6 +2651,11 @@ spec:
                     <password>${GH_TOKEN}</password>
                   </server>
                   <server>
+                    <id>tool-use-policy</id>
+                    <username>${GH_USER}</username>
+                    <password>${GH_TOKEN}</password>
+                  </server>
+                  <server>
                     <id>guvnor-m2-repo</id>
                     <username>${GH_USER}</username>
                     <password>${GH_TOKEN}</password>
@@ -2655,6 +2677,12 @@ spec:
                         <snapshots><enabled>true</enabled></snapshots>
                       </repository>
                       <repository>
+                        <id>tool-use-policy</id>
+                        <url>https://maven.pkg.github.com/dotcomrow/drools-rule-app-tool-use-policy</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </repository>
+                      <repository>
                         <id>central</id>
                         <url>https://repo1.maven.org/maven2/</url>
                         <releases><enabled>true</enabled></releases>
@@ -2665,6 +2693,12 @@ spec:
                       <pluginRepository>
                         <id>github</id>
                         <url>https://maven.pkg.github.com/dotcomrow/rules-packages</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </pluginRepository>
+                      <pluginRepository>
+                        <id>tool-use-policy</id>
+                        <url>https://maven.pkg.github.com/dotcomrow/drools-rule-app-tool-use-policy</url>
                         <releases><enabled>true</enabled></releases>
                         <snapshots><enabled>true</enabled></snapshots>
                       </pluginRepository>

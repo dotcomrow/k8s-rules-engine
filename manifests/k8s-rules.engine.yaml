@@ -251,6 +251,7 @@ spec:
               path "secret/data/keycloak-client-id-drools-kie-server" { capabilities = ["read"] }
               path "secret/data/keycloak-client-secret-drools-kie-server" { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-drools-kie-server-service" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-secret-drools-kie-server-service" { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-kogito-console"    { capabilities = ["read"] }
               path "secret/data/drools/admin"                        { capabilities = ["read"] }
               path "secret/data/drools/kie-user"                     { capabilities = ["read"] }
@@ -521,6 +522,13 @@ spec:
                 exit 1
               fi
 
+              KIE_CLIENT_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server-service)"
+              KIE_SERVER_SERVICE_CLIENT_SECRET="$(printf '%s' "$KIE_CLIENT_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "$KIE_SERVER_SERVICE_CLIENT_SECRET" ]; then
+                echo "❌ Missing drools-kie-server-service client secret in Vault"
+                exit 1
+              fi
+
               KIE_SERVER_CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-kie-server)"
               KIE_SERVER_CLIENT_ID="$(printf '%s' "$KIE_SERVER_CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
               if [ -z "$KIE_SERVER_CLIENT_ID" ]; then
@@ -557,6 +565,7 @@ spec:
               export CONTROLLER_PASSWORD="${CONTROLLER_PASS}"
               export WORKBENCH_CLIENT_ID="${CLIENT_ID}"
               export KIE_SERVER_SERVICE_CLIENT_ID="${KIE_CLIENT_ID}"
+              export KIE_SERVER_SERVICE_CLIENT_SECRET="${KIE_SERVER_SERVICE_CLIENT_SECRET}"
               export KIE_SERVER_CLIENT_ID="${KIE_SERVER_CLIENT_ID}"
               export KIE_SERVER_CLIENT_SECRET="${KIE_SERVER_CLIENT_SECRET}"
               export KIE_SERVER_USER="${KIE_SERVER_USER}"
@@ -592,6 +601,10 @@ spec:
 
               if [ -z "${KIE_SERVER_SERVICE_CLIENT_ID:-}" ]; then
                 echo "❌ Missing KIE_SERVER_SERVICE_CLIENT_ID in keycloak-env.sh"
+                exit 1
+              fi
+              if [ -z "${KIE_SERVER_SERVICE_CLIENT_SECRET:-}" ]; then
+                echo "❌ Missing KIE_SERVER_SERVICE_CLIENT_SECRET in keycloak-env.sh"
                 exit 1
               fi
               if [ -z "${KIE_SERVER_CLIENT_ID:-}" ] || [ -z "${KIE_SERVER_CLIENT_SECRET:-}" ]; then
@@ -1040,6 +1053,7 @@ spec:
               ensure_direct_access_grants "$WORKBENCH_CLIENT_ID"
               ensure_direct_access_grants "$KIE_SERVER_CLIENT_ID"
               ensure_client_secret "$KIE_SERVER_CLIENT_ID" "$KIE_SERVER_CLIENT_SECRET"
+              ensure_client_secret "$KIE_SERVER_SERVICE_CLIENT_ID" "$KIE_SERVER_SERVICE_CLIENT_SECRET"
               ensure_controller_user "$CONTROLLER_USER" "$CONTROLLER_PASSWORD"
               ensure_kie_user "$KIE_SERVER_USER" "$KIE_SERVER_PASSWORD"
 

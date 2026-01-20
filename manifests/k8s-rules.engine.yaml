@@ -2956,6 +2956,7 @@ spec:
   settings:
     app:
       type: BACKEND_TO_BACKEND
+      clientId: rules-engine-internal
 
 ---
 apiVersion: gravitee.io/v1alpha1

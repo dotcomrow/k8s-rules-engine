@@ -115,7 +115,7 @@ data:
   enable-redirect.cli: |
     embed-server --std-out=echo --server-config=standalone-full-kie-server.xml
     batch
-    /subsystem=undertow/configuration=filter/expression-filter=kie-healthcheck:add(expression="path('/kie-server/services/rest/server/healthcheck') -> response-code(200)")
+    /subsystem=undertow/configuration=filter/expression-filter=kie-healthcheck:add(expression="path('/kie-server/services/rest/server/healthcheck') or path('/services/rest/server/healthcheck') -> response-code(200)")
     /subsystem=undertow/server=default-server/host=default-host/filter-ref=kie-healthcheck:add
     /subsystem=undertow/configuration=filter/expression-filter=redirect-root:add(expression="path('/') -> redirect('/kie-server/services/rest/server')")
     /subsystem=undertow/server=default-server/host=default-host/filter-ref=redirect-root:add
@@ -142,7 +142,7 @@ data:
   enable-redirect.cli: |
     embed-server --std-out=echo --server-config=standalone-full.xml
     batch
-    /subsystem=undertow/configuration=filter/expression-filter=decision-healthcheck:add(expression="path('/kie-server/services/rest/server/healthcheck') -> response-code(200)")
+    /subsystem=undertow/configuration=filter/expression-filter=decision-healthcheck:add(expression="path('/kie-server/services/rest/server/healthcheck') or path('/services/rest/server/healthcheck') -> response-code(200)")
     /subsystem=undertow/server=default-server/host=default-host/filter-ref=decision-healthcheck:add
     run-batch
     stop-embedded-server

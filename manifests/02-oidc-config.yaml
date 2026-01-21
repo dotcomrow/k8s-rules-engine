@@ -58,13 +58,10 @@ data:
     if (outcome == success) of /subsystem=elytron/simple-role-decoder=from-roles-attribute:read-resource()
       /subsystem=elytron/simple-role-decoder=from-roles-attribute:write-attribute(name=attribute,value=Roles)
     end-if
-    if (outcome == success) of /subsystem=elytron/security-domain=ApplicationDomain:read-resource()
-      if (outcome == success) of /subsystem=elytron/identity-realm=KieRealm:read-resource()
-        /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=realms,value=[{realm=KeycloakRealm,role-decoder=from-roles-attribute},{realm=KieRealm,role-decoder=from-roles-attribute},{realm=ApplicationRealm,role-decoder=groups-to-roles},{realm=local}])
-      end-if
-      if (outcome != success) of /subsystem=elytron/identity-realm=KieRealm:read-resource()
-        /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=realms,value=[{realm=KeycloakRealm,role-decoder=from-roles-attribute},{realm=ApplicationRealm,role-decoder=groups-to-roles},{realm=local}])
-      end-if
+    if (outcome == success) of /subsystem=elytron/identity-realm=KieRealm:read-resource()
+      /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=realms,value=[{realm=KeycloakRealm,role-decoder=from-roles-attribute},{realm=KieRealm,role-decoder=from-roles-attribute},{realm=ApplicationRealm,role-decoder=groups-to-roles},{realm=local}])
+    else
+      /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=realms,value=[{realm=KeycloakRealm,role-decoder=from-roles-attribute},{realm=ApplicationRealm,role-decoder=groups-to-roles},{realm=local}])
     end-if
     if (outcome == success) of /subsystem=elytron/security-domain=ApplicationDomain:read-attribute(name=default-realm)
       /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=default-realm,value=KeycloakRealm)

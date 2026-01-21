@@ -1,0 +1,71 @@
+# =========================
+# Kogito Jobs Service (ephemeral)
+# =========================
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kogito-jobs-service
+  namespace: drools
+  labels: { app: kogito-jobs-service }
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kogito-jobs-service }
+  template:
+    metadata:
+      labels: { app: kogito-jobs-service }
+    spec:
+      serviceAccountName: drools-kogito-jobs
+      initContainers:
+        - name: wait-for-services
+          image: alpine/k8s:1.31.4
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "🔄 Waiting for core Drools services to be ready..."
+              until kubectl get pods -n drools -l app=kie-server --field-selector=status.phase=Running 2>/dev/null | grep -q "Running"; do sleep 10; done
+              until kubectl get pods -n drools -l app=kogito-decision-service --field-selector=status.phase=Running 2>/dev/null | grep -q "Running"; do sleep 10; done
+              until kubectl get pods -n drools -l app=api-gateway --field-selector=status.phase=Running 2>/dev/null | grep -q "Running"; do sleep 10; done
+              sleep 30
+      containers:
+        - name: kogito-jobs-service
+          image: quay.io/kiegroup/kogito-jobs-service-ephemeral:1.44.1
+          ports: [{ containerPort: 8080 }]
+          env:
+            - { name: QUARKUS_HTTP_PORT, value: "8080" }
+            - { name: QUARKUS_HTTP_HOST, value: "0.0.0.0" }
+            - { name: KOGITO_JOBS_SERVICE_URL, value: "https://jobs-drools.teleport.app.suncoast.systems" }
+            - { name: QUARKUS_LOG_LEVEL, value: "INFO" }
+            - { name: QUARKUS_LOG_CONSOLE_ENABLE, value: "true" }
+            - { name: KOGITO_PERSISTENCE_TYPE, value: "ephemeral" }
+            - { name: QUARKUS_SMALLRYE_OPENAPI_PATH, value: "/q/openapi" }
+            - { name: QUARKUS_SWAGGER_UI_ALWAYS_INCLUDE, value: "true" }
+          readinessProbe:
+            httpGet: { path: /q/health/ready, port: 8080 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            httpGet: { path: /q/health/live, port: 8080 }
+            initialDelaySeconds: 45
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kogito-jobs-service
+  namespace: drools
+spec:
+  selector:
+    app: kogito-jobs-service
+  ports:
+    - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
+  type: ClusterIP
+

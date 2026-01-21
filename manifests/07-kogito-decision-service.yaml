@@ -1,0 +1,128 @@
+# =========================
+# KIE Server Showcase (Decision façade)
+# =========================
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kogito-decision-service
+  namespace: drools
+  labels:
+    app: kogito-decision-service
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kogito-decision-service
+  template:
+    metadata:
+      labels:
+        app: kogito-decision-service
+    spec:
+      initContainers:
+        - name: setup-redirect
+          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              echo "🔧 Setting up Decision Service redirect..."
+              mkdir -p /shared/welcome-content
+              cat > /shared/welcome-content/index.html << 'EOF'
+              <!DOCTYPE html><meta http-equiv="refresh" content="0; url=/kie-server/services/rest/server">
+              <title>Redirecting…</title><a href="/kie-server/services/rest/server">Continue</a>
+              EOF
+              echo "✅ Redirect setup complete"
+          volumeMounts:
+            - name: welcome-content
+              mountPath: /shared
+      containers:
+        - name: kogito-decision-service
+          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
+          command: ["/bin/bash", "-c"]
+          args:
+            - exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: welcome-content
+              mountPath: /opt/jboss/wildfly/welcome-content
+              subPath: welcome-content
+          env:
+            - { name: JAVA_OPTS, value: "-Xms512m -Xmx2048m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8 -Dorg.drools.server.filter.classes=true" }
+            - { name: KIE_SERVER_LOCATION, value: "http://kogito-decision-service.drools.svc.cluster.local:8080/kie-server/services/rest/server" }
+            - { name: KIE_SERVER_USER, value: "kieserver" }
+            - { name: KIE_SERVER_PWD,  value: "kieserver1!" }
+            - { name: KIE_SERVER_CONTROLLER_USER, value: "admin" }
+            - { name: KIE_SERVER_CONTROLLER_PWD,  value: "admin" }
+            - { name: KIE_SERVER_HOST, value: "0.0.0.0" }
+            - { name: KIE_SERVER_PORT, value: "8080" }
+          readinessProbe:
+            tcpSocket: { port: 8080 }
+            initialDelaySeconds: 120
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket: { port: 8080 }
+            initialDelaySeconds: 180
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+      volumes:
+        - name: welcome-content
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kogito-decision-service
+  namespace: drools
+  annotations:
+    gravitee.io/expose: "true"
+    gravitee.io/context-path: "/decisions"
+    gravitee.io/auth-required: "jwt"
+    gravitee.io/approval-required: "admin"
+
+    gravitee.io/description: "Drools Kogito Decision API"
+    gravitee.io/version: "latest"
+    gravitee.io/tags: "drools,decision,kogito"
+    gravitee.io/definition-name: "drools-decision-service"
+    gravitee.io/definition-summary: "Drools Decision Service"
+    gravitee.io/definition-description: "Decision execution API"
+    gravitee.io/definition-version: "latest"
+    gravitee.io/definition-type: "HTTP"
+    gravitee.io/definition-openapi-url: "http://kogito-decision-openapi.drools.svc.cluster.local:8080/openapi.json"
+    gravitee.io/definition-context-path: "/decisions"
+    gravitee.io/definition-visibility: "PUBLIC"
+    gravitee.io/definition-state: "STARTED"
+    gravitee.io/definition-lifecycle-state: "PUBLISHED"
+
+    gravitee.io/definition-listener-host: "kogito-decision-service.drools.svc.cluster.local"
+    gravitee.io/definition-listener-port: "8080"
+
+    gravitee.io/definition-groups: "rules"
+    gravitee.io/definition-tags: "drools,kogito,decisions"
+    gravitee.io/definition-labels: "internal,decisions"
+    gravitee.io/definition-categories: "rules"
+    gravitee.io/definition-path-mappings: "/decisions/*"
+
+    gravitee.io/definition-metadata: '{"owner":"drools","system":"rules-engine"}'
+    gravitee.io/definition-properties: '{"tier":"internal","region":"cluster","token_exchange_url":"https://auth.suncoast.systems/realms/internal/protocol/openid-connect/token","token_exchange_client_id":"<path:secret/data/keycloak-client-id-drools-kie-server-service#value>","token_exchange_client_secret":"<path:secret/data/keycloak-client-secret-drools-kie-server-service#value>"}'
+    gravitee.io/definition-resources: '[]'
+    gravitee.io/definition-endpoint-groups: '[{"name":"default","type":"http-proxy","sharedConfiguration":{"http":{"version":"HTTP_1_1","connectTimeout":30000,"readTimeout":300000,"idleTimeout":300000,"keepAlive":true,"keepAliveTimeout":30000,"pipelining":false,"useCompression":false,"propagateClientAcceptEncoding":false,"followRedirects":false,"maxConcurrentConnections":20}},"services":{"healthCheck":{"enabled":true,"overrideConfiguration":true,"type":"http-health-check","configuration":{"schedule":"*/30 * * * * *","target":"/kie-server/services/rest/server/healthcheck","method":"GET","overrideEndpointPath":true,"headers":[],"assertion":"{#response.status == 200 || #response.status == 401 || #response.status == 403}","successThreshold":2,"failureThreshold":2}}},"endpoints":[{"name":"decision-service-http","type":"http-proxy","inheritConfiguration":true,"weight":1,"configuration":{"target":"http://kogito-decision-service.drools.svc.cluster.local:8080"},"secondary":false}]}]'
+    gravitee.io/definition-pages: '{"swagger":{"type":"SWAGGER","name":"openapi","published":true,"visibility":"PUBLIC","homepage":false,"source":{"type":"http-fetcher","configuration":{"url":"http://kogito-decision-openapi.drools.svc.cluster.local:8080/openapi.json","autoFetch":true,"fetchCron":"0 */5 * * * *","useSystemProxy":false}}}}'
+    gravitee.io/definition-plans: '{"bearer-internal":{"name":"Bearer Token","description":"Bearer token exchange","security":{"type":"KEY_LESS"},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Bearer \")}"},"jwt-internal":{"name":"JWT Internal","description":"Keycloak internal realm JWT","security":{"type":"JWT","configuration":{"signature":"RSA_RS256","publicKeyResolver":"JWKS_URL","resolverParameter":"https://auth.suncoast.systems/realms/internal/protocol/openid-connect/certs","userClaim":"preferred_username","extractClaims":true}},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"{#jwt != null && #jwt.claims[\"iss\"] == \"https://auth.suncoast.systems/realms/internal\"}"},"jwt-external":{"name":"JWT External","description":"Keycloak external realm JWT","security":{"type":"JWT","configuration":{"signature":"RSA_RS256","publicKeyResolver":"JWKS_URL","resolverParameter":"https://auth.suncoast.systems/realms/external/protocol/openid-connect/certs","userClaim":"preferred_username","extractClaims":true}},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"{#jwt != null && #jwt.claims[\"iss\"] == \"https://auth.suncoast.systems/realms/external\"}"}}'
+    gravitee.io/definition-flows: '[{"name":"token-exchange","enabled":true,"request":[{"name":"keycloak-token-exchange","policy":"policy-http-callout","enabled":true,"description":"Exchange token to internal realm","messageCondition":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Bearer \")}","configuration":{"url":"{#properties[\"token_exchange_url\"]}","method":"POST","headers":[{"name":"Content-Type","value":"application/x-www-form-urlencoded"}],"body":"grant_type=urn:ietf:params:oauth:grant-type:token-exchange&client_id={#properties[\"token_exchange_client_id\"]}&client_secret={#properties[\"token_exchange_client_secret\"]}&subject_token={#request.headers[\"authorization\"][0].substring(7)}","exitOnError":true,"variables":[{"name":"exchanged_token","value":"{#jsonPath(#calloutResponse.content, ''$.access_token'')}"}]}},{"name":"strip-auth-header","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchanged_token\"] != null}","configuration":{"removeHeaders":["Authorization"]}},{"name":"apply-exchanged-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchanged_token\"] != null}","configuration":{"addHeaders":[{"name":"Authorization","value":"Bearer {#context.attributes[\"exchanged_token\"]}"}]}}]}]'
+    gravitee.io/definition-response-templates: '{}'
+    gravitee.io/definition-analytics: '{"enabled":true,"logging":{"condition":"true","content":{"headers":true,"payload":false,"messageHeaders":false,"messageMetadata":false,"messagePayload":false},"mode":{"entrypoint":true,"endpoint":true},"phase":{"request":true,"response":true}}}'
+    gravitee.io/definition-entrypoints: '[]'
+spec:
+  selector:
+    app: kogito-decision-service
+  ports:
+    - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
+  type: ClusterIP
+

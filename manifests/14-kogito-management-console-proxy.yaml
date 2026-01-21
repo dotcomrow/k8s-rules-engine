@@ -1,0 +1,64 @@
+# =========================
+# Kogito Management Console Proxy (UI + APIs)
+# =========================
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kogito-management-console-proxy
+  namespace: drools
+  labels: { app: kogito-management-console-proxy }
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kogito-management-console-proxy }
+  template:
+    metadata:
+      labels: { app: kogito-management-console-proxy }
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25-alpine
+          ports: [{ containerPort: 8080 }]
+          volumeMounts:
+            - { name: nginx-config, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf }
+          readinessProbe:
+            httpGet: { path: /ready, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: nginx-config
+          configMap: { name: kogito-management-console-proxy-config }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kogito-management-console-proxy
+  namespace: drools
+  annotations:
+    teleport.dev/name: "kogito-management-console"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "kogito-console-drools.teleport.app.suncoast.systems"
+    teleport.dev/description: "Kogito Management Console - monitoring UI"
+    teleport.dev/port: "8080"
+  labels:
+    teleport.dev/app: "kogito-management-console"
+    teleport.dev/enroll: "true"
+spec:
+  selector:
+    app: kogito-management-console-proxy
+  ports:
+    - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
+  type: ClusterIP
+

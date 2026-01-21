@@ -1,0 +1,62 @@
+# =========================
+# Linkerd Policy: Gravitee-only access to KIE services
+# =========================
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: Server
+metadata:
+  name: kie-server
+  namespace: drools
+spec:
+  podSelector:
+    matchLabels:
+      app: kie-server
+  port: 8080
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: kie-server-from-gravitee
+  namespace: drools
+spec:
+  server:
+    name: kie-server
+  client:
+    meshTLS:
+      serviceAccounts:
+        - name: gravitee
+          namespace: k8s-api-gateway
+        - name: drools-workbench
+          namespace: drools
+        - name: kie-server-openapi
+          namespace: drools
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: Server
+metadata:
+  name: kogito-decision-service
+  namespace: drools
+spec:
+  podSelector:
+    matchLabels:
+      app: kogito-decision-service
+  port: 8080
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: decision-service-from-gravitee
+  namespace: drools
+spec:
+  server:
+    name: kogito-decision-service
+  client:
+    meshTLS:
+      serviceAccounts:
+        - name: gravitee
+          namespace: k8s-api-gateway
+        - name: kogito-decision-openapi
+          namespace: drools
+

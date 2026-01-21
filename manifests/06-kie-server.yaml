@@ -1,0 +1,456 @@
+# =========================
+# KIE Server – Showcase image + redirect
+# =========================
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kie-server
+  namespace: drools
+  labels: { app: kie-server }
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: kie-server }
+  template:
+    metadata:
+      labels: { app: kie-server }
+    spec:
+      serviceAccountName: drools-kie-server
+      volumes:
+        - name: kieserver-config
+          emptyDir: {}
+        - name: redirect-cli
+          configMap:
+            name: kieserver-redirect-cli
+            items:
+              - { key: enable-redirect.cli, path: enable-redirect.cli, mode: 0444 }
+              - { key: run-cli.sh,        path: run-cli.sh,        mode: 0555 }
+        - name: welcome-content
+          emptyDir: {}
+        - name: vault-secrets
+          emptyDir: {}
+        - name: kie-m2
+          emptyDir: {}
+        - name: wildfly-oidc
+          configMap:
+            name: wildfly-oidc-config-kieserver
+            items:
+              - { key: enable-oidc.cli,    path: enable-oidc.cli,    mode: 0444 }
+              - { key: configure-oidc.sh,  path: configure-oidc.sh,  mode: 0555 }
+        - name: wildfly-modules
+          emptyDir: {}
+      initContainers:
+        - name: wait-for-config-job
+          image: alpine/k8s:1.31.4
+          command: ["/bin/sh","-lc"]
+          args:
+            - |
+              echo "Waiting for Job vault/drools-yugabyte-config to complete..."
+              while true; do
+                if ! kubectl -n vault get job drools-yugabyte-config >/dev/null 2>&1; then
+                  echo "  └─ job not found yet..."; sleep 5; continue
+                fi
+                SUCC="$(kubectl -n vault get job drools-yugabyte-config -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
+                [ "$SUCC" -ge 1 ] && break
+                sleep 5
+              done
+        - name: vault-kie-users
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+              apk add --no-cache jq curl
+              VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
+                role=drools \
+                jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token))
+              export VAULT_TOKEN
+
+              OIDC_ENV_FILE="/shared/oidc-env.sh"
+              : > "$OIDC_ENV_FILE"
+              OIDC_AUTH_URL="https://auth.suncoast.systems"
+              OIDC_REALM="internal"
+              echo "export OIDC_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
+              echo "export OIDC_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
+              echo "export OIDC_KIE_SERVER_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
+              echo "export OIDC_KIE_SERVER_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
+
+              REALM_JSON="$(curl -fsSL "$OIDC_AUTH_URL/realms/$OIDC_REALM")"
+              OIDC_PUBLIC_KEY="$(printf '%s' "$REALM_JSON" | jq -r '.public_key // empty')"
+              if [ -z "${OIDC_PUBLIC_KEY:-}" ]; then
+                echo "❌ Keycloak realm public key not found"
+                exit 1
+              fi
+              OIDC_PUBLIC_KEY_PEM="$(printf '-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----' "$OIDC_PUBLIC_KEY")"
+              printf 'export OIDC_JWT_PUBLIC_KEY="%s"\n' "$OIDC_PUBLIC_KEY_PEM" >> "$OIDC_ENV_FILE"
+
+              WB_ID_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-workbench 2>/dev/null || true)"
+              WB_ID="$(printf '%s' "$WB_ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "${WB_ID:-}" ]; then
+                echo "❌ OIDC client id not found at secret/keycloak-client-id-drools-workbench"
+                exit 1
+              fi
+              echo "export OIDC_CLIENT_ID=\"$WB_ID\"" >> "$OIDC_ENV_FILE"
+
+              WB_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-workbench 2>/dev/null || true)"
+              WB_SECRET="$(printf '%s' "$WB_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "${WB_SECRET:-}" ]; then
+                echo "❌ OIDC client secret not found at secret/keycloak-client-secret-drools-workbench"
+                exit 1
+              fi
+              echo "export OIDC_CLIENT_SECRET=\"$WB_SECRET\"" >> "$OIDC_ENV_FILE"
+
+              KIE_OIDC_ID_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-kie-server 2>/dev/null || true)"
+              KIE_OIDC_ID="$(printf '%s' "$KIE_OIDC_ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "${KIE_OIDC_ID:-}" ]; then
+                echo "❌ OIDC client id not found at secret/keycloak-client-id-drools-kie-server"
+                exit 1
+              fi
+              echo "export OIDC_KIE_SERVER_CLIENT_ID=\"$KIE_OIDC_ID\"" >> "$OIDC_ENV_FILE"
+
+              KIE_OIDC_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server 2>/dev/null || true)"
+              KIE_OIDC_SECRET="$(printf '%s' "$KIE_OIDC_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "${KIE_OIDC_SECRET:-}" ]; then
+                echo "❌ OIDC client secret not found at secret/keycloak-client-secret-drools-kie-server"
+                exit 1
+              fi
+              echo "export OIDC_KIE_SERVER_CLIENT_SECRET=\"$KIE_OIDC_SECRET\"" >> "$OIDC_ENV_FILE"
+
+              GH_USER_JSON="$(vault kv get -format=json secret/k8s-rules-engine-github-packages-username 2>/dev/null || true)"
+              GH_USER="$(printf '%s' "$GH_USER_JSON" | jq -r '.data.data.value // empty')"
+              GH_TOKEN_JSON="$(vault kv get -format=json secret/k8s-rules-engine-github-packages-token 2>/dev/null || true)"
+              GH_TOKEN="$(printf '%s' "$GH_TOKEN_JSON" | jq -r '.data.data.value // empty')"
+              if [ -z "${GH_USER:-}" ] || [ -z "${GH_TOKEN:-}" ]; then
+                echo "❌ Missing GitHub Packages credentials in Vault"
+                exit 1
+              fi
+              mkdir -p /kie-m2
+              cat > /kie-m2/settings.xml <<EOF
+              <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                        xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+                <servers>
+                  <server>
+                    <id>github</id>
+                    <username>${GH_USER}</username>
+                    <password>${GH_TOKEN}</password>
+                  </server>
+                  <server>
+                    <id>tool-use-policy</id>
+                    <username>${GH_USER}</username>
+                    <password>${GH_TOKEN}</password>
+                  </server>
+                  <server>
+                    <id>guvnor-m2-repo</id>
+                    <username>${GH_USER}</username>
+                    <password>${GH_TOKEN}</password>
+                  </server>
+                  <server>
+                    <id>kie-server</id>
+                    <username>${GH_USER}</username>
+                    <password>${GH_TOKEN}</password>
+                  </server>
+                </servers>
+                <profiles>
+                  <profile>
+                    <id>github</id>
+                    <repositories>
+                      <repository>
+                        <id>github</id>
+                        <url>https://maven.pkg.github.com/dotcomrow/rules-packages</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </repository>
+                      <repository>
+                        <id>tool-use-policy</id>
+                        <url>https://maven.pkg.github.com/dotcomrow/drools-rule-app-tool-use-policy</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </repository>
+                      <repository>
+                        <id>central</id>
+                        <url>https://repo1.maven.org/maven2/</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>false</enabled></snapshots>
+                      </repository>
+                    </repositories>
+                    <pluginRepositories>
+                      <pluginRepository>
+                        <id>github</id>
+                        <url>https://maven.pkg.github.com/dotcomrow/rules-packages</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </pluginRepository>
+                      <pluginRepository>
+                        <id>tool-use-policy</id>
+                        <url>https://maven.pkg.github.com/dotcomrow/drools-rule-app-tool-use-policy</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </pluginRepository>
+                      <pluginRepository>
+                        <id>central</id>
+                        <url>https://repo1.maven.org/maven2/</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>false</enabled></snapshots>
+                      </pluginRepository>
+                    </pluginRepositories>
+                  </profile>
+                </profiles>
+                <activeProfiles>
+                  <activeProfile>github</activeProfile>
+                </activeProfiles>
+              </settings>
+              EOF
+              echo "✅ GitHub Packages Maven settings created"
+
+              KIE_ENV_FILE="/shared/kie-users-env.sh"
+              : > "$KIE_ENV_FILE"
+              ADMIN_JSON="$(vault kv get -format=json secret/drools/admin 2>/dev/null || true)"
+              ADMIN_USER="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.username // empty')"
+              ADMIN_PASS="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.password // empty')"
+              KIE_USER_JSON="$(vault kv get -format=json secret/drools/kie-user 2>/dev/null || true)"
+              KIE_USER="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.username // empty')"
+              KIE_PASS="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.password // empty')"
+              if [ -z "${ADMIN_USER:-}" ] || [ -z "${ADMIN_PASS:-}" ] || [ -z "${KIE_USER:-}" ] || [ -z "${KIE_PASS:-}" ]; then
+                echo "Missing drools admin/kie-user creds in Vault"
+                exit 1
+              fi
+              {
+                echo "export KIE_SERVER_CONTROLLER_USER=\"$ADMIN_USER\""
+                echo "export KIE_SERVER_CONTROLLER_PWD=\"$ADMIN_PASS\""
+                echo "export KIE_SERVER_USER=\"$KIE_USER\""
+                echo "export KIE_SERVER_PWD=\"$KIE_PASS\""
+              } > "$KIE_ENV_FILE"
+          volumeMounts:
+            - name: vault-secrets
+              mountPath: /shared
+            - name: kie-m2
+              mountPath: /kie-m2
+        - name: configure-root-redirect
+          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
+          command: ["/bin/sh","-c"]
+          args: ["/redirect/run-cli.sh"]
+          volumeMounts:
+            - { name: kieserver-config, mountPath: /config }
+            - { name: redirect-cli,     mountPath: /redirect }
+        - name: copy-wildfly-modules
+          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+              cp -R /opt/jboss/wildfly/modules/. /target/
+              echo "✅ WildFly modules copied"
+          volumeMounts:
+            - { name: wildfly-modules, mountPath: /target }
+        - name: install-keycloak-adapter
+          image: alpine:3.20
+          command: ["/bin/sh","-c"]
+          env:
+            - name: KEYCLOAK_ADAPTER_URL
+              value: "https://repo1.maven.org/maven2/org/keycloak/keycloak-wildfly-adapter-dist/16.1.1/keycloak-wildfly-adapter-dist-16.1.1.zip"
+          args:
+            - |
+              set -euo pipefail
+              apk add --no-cache curl unzip
+              WORK="/tmp/keycloak"
+              mkdir -p "$WORK"
+              echo "⬇️  Downloading Keycloak WildFly adapter..."
+              curl -fsSL "$KEYCLOAK_ADAPTER_URL" -o "$WORK/adapter.zip"
+              unzip -q "$WORK/adapter.zip" -d "$WORK"
+              ADAPTER_DIR="$(find "$WORK" -maxdepth 1 -type d -name "keycloak-wildfly-adapter-dist*" | head -n1)"
+              if [ -z "$ADAPTER_DIR" ] || [ ! -d "$ADAPTER_DIR/modules" ]; then
+                if [ -d "$WORK/modules" ]; then
+                  ADAPTER_DIR="$WORK"
+                else
+                  echo "❌ Keycloak adapter modules not found in distribution."
+                  find "$WORK" -maxdepth 2 -type d -name "modules" -print || true
+                  exit 1
+                fi
+              fi
+              cp -R "$ADAPTER_DIR/modules/." /target/
+              if [ -d /target/system/add-ons/keycloak/org/keycloak ]; then
+                mkdir -p /target/system/layers/base/org
+                cp -R /target/system/add-ons/keycloak/org/keycloak /target/system/layers/base/org/
+              fi
+              echo "✅ Keycloak adapter modules installed"
+          volumeMounts:
+            - { name: wildfly-modules, mountPath: /target }
+        - name: configure-oidc
+          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -e
+              sh /oidc/configure-oidc.sh
+          env:
+            - { name: OIDC_ENABLE,           value: "true" }
+            - { name: WILDFLY_SERVER_CONFIG, value: "standalone-full-kie-server.xml" }
+          volumeMounts:
+            - { name: kieserver-config, mountPath: /opt/jboss/wildfly/standalone/configuration }
+            - { name: wildfly-oidc, mountPath: /oidc }
+            - { name: vault-secrets, mountPath: /vault-secrets }
+            - { name: wildfly-modules, mountPath: /opt/jboss/wildfly/modules }
+        - name: setup-redirect-fallback
+          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              rm -rf /opt/jboss/wildfly/welcome-content/*
+              cat > /opt/jboss/wildfly/welcome-content/index.html << 'EOF'
+              <!DOCTYPE html><meta http-equiv="refresh" content="0; url=/kie-server/services/rest/server">
+              <title>Redirecting…</title><a href="/kie-server/services/rest/server">Continue</a>
+              EOF
+          volumeMounts:
+            - { name: welcome-content, mountPath: /opt/jboss/wildfly/welcome-content }
+      containers:
+        - name: kie-server
+          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              if [ -f /vault-secrets/kie-users-env.sh ]; then
+                # shellcheck disable=SC1091
+                . /vault-secrets/kie-users-env.sh
+              else
+                echo "KIE server credentials file not found at /vault-secrets/kie-users-env.sh"
+                exit 1
+              fi
+              if [ -f /vault-secrets/oidc-env.sh ]; then
+                # shellcheck disable=SC1091
+                . /vault-secrets/oidc-env.sh
+              fi
+              exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 \
+                -Dorg.kie.server.id="${KIE_SERVER_ID}" \
+                -Dorg.kie.server.user="${KIE_SERVER_USER}" \
+                -Dorg.kie.server.pwd="${KIE_SERVER_PWD}" \
+                -Dorg.kie.server.location="${KIE_SERVER_LOCATION}" \
+                -Dorg.kie.server.controller="${KIE_SERVER_CONTROLLER}" \
+                -Dorg.kie.server.controller.user="${KIE_SERVER_CONTROLLER_USER}" \
+                -Dorg.kie.server.controller.pwd="${KIE_SERVER_CONTROLLER_PWD}" \
+                -Dorg.kie.server.repo="${KIE_MAVEN_REPO}" \
+                -Dorg.kie.maven.settings.custom="/opt/jboss/.m2/settings.xml" \
+                -c standalone-full-kie-server.xml
+          ports:
+            - { containerPort: 8080 }
+          env:
+            - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0 -Dorg.drools.server.filter.classes=true" }
+            - { name: KIE_SERVER_ID,       value: "kie-server" }
+            - { name: KIE_SERVER_LOCATION, value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server" }
+            - { name: KIE_SERVER_CONTROLLER, value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller" }
+            - { name: KIE_MAVEN_REPO,     value: "/opt/jboss/.m2/repository" }
+            - { name: KIE_SERVER_EXTENSIONS, value: "BRM,DMN,BPM,CaseMgmt,Planner" }
+          volumeMounts:
+            - { name: kieserver-config,  mountPath: /opt/jboss/wildfly/standalone/configuration }
+            - { name: welcome-content,   mountPath: /opt/jboss/wildfly/welcome-content }
+            - { name: vault-secrets,     mountPath: /vault-secrets }
+            - { name: wildfly-modules,   mountPath: /opt/jboss/wildfly/modules }
+            - { name: kie-m2,            mountPath: /opt/jboss/.m2 }
+          readinessProbe:
+            tcpSocket: { port: 8080 }
+            initialDelaySeconds: 120
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket: { port: 8080 }
+            initialDelaySeconds: 180
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kie-server
+  namespace: drools
+  annotations:
+    gravitee.io/expose: "true"
+    gravitee.io/context-path: "/kie-server"
+    gravitee.io/auth-required: "jwt"
+    gravitee.io/approval-required: "admin"
+
+    gravitee.io/description: "Drools KIE Server API"
+    gravitee.io/version: "latest"
+    gravitee.io/tags: "drools,rules,kie"
+    gravitee.io/definition-name: "drools-kie-server"
+    gravitee.io/definition-summary: "Drools KIE Server API"
+    gravitee.io/definition-description: "Rules execution API"
+    gravitee.io/definition-version: "latest"
+    gravitee.io/definition-type: "HTTP"
+    gravitee.io/definition-openapi-url: "http://kie-server-openapi.drools.svc.cluster.local:8080/openapi.json"
+    gravitee.io/definition-context-path: "/kie-server"
+    gravitee.io/definition-visibility: "PUBLIC"
+    gravitee.io/definition-state: "STARTED"
+    gravitee.io/definition-lifecycle-state: "PUBLISHED"
+
+    gravitee.io/definition-listener-host: "kie-server.drools.svc.cluster.local"
+    gravitee.io/definition-listener-port: "8080"
+
+    gravitee.io/definition-groups: "rules"
+    gravitee.io/definition-tags: "drools,kie,rules"
+    gravitee.io/definition-labels: "internal,rules"
+    gravitee.io/definition-categories: "rules"
+    gravitee.io/definition-path-mappings: "/kie-server/*"
+
+    gravitee.io/definition-metadata: '{"owner":"drools","system":"rules-engine"}'
+    gravitee.io/definition-properties: '{"tier":"internal","region":"cluster","token_exchange_url":"https://auth.suncoast.systems/realms/internal/protocol/openid-connect/token","token_exchange_client_id":"<path:secret/data/keycloak-client-id-drools-kie-server-service#value>","token_exchange_client_secret":"<path:secret/data/keycloak-client-secret-drools-kie-server-service#value>"}'
+    gravitee.io/definition-resources: '[]'
+    gravitee.io/definition-endpoint-groups: '[{"name":"default","type":"http-proxy","sharedConfiguration":{"http":{"version":"HTTP_1_1","connectTimeout":30000,"readTimeout":300000,"idleTimeout":300000,"keepAlive":true,"keepAliveTimeout":30000,"pipelining":false,"useCompression":false,"propagateClientAcceptEncoding":false,"followRedirects":false,"maxConcurrentConnections":20}},"services":{"healthCheck":{"enabled":true,"overrideConfiguration":true,"type":"http-health-check","configuration":{"schedule":"*/30 * * * * *","target":"/services/rest/server/healthcheck","method":"GET","overrideEndpointPath":false,"headers":[],"assertion":"{#response.status == 200 || #response.status == 401 || #response.status == 403}","successThreshold":2,"failureThreshold":2}}},"endpoints":[{"name":"kie-server-http","type":"http-proxy","inheritConfiguration":true,"weight":1,"configuration":{"target":"http://kie-server.drools.svc.cluster.local:8080/kie-server"},"secondary":false}]}]'
+    gravitee.io/definition-pages: '{"swagger":{"type":"SWAGGER","name":"openapi","published":true,"visibility":"PUBLIC","homepage":false,"source":{"type":"http-fetcher","configuration":{"url":"http://kie-server-openapi.drools.svc.cluster.local:8080/openapi.json","autoFetch":true,"fetchCron":"0 */5 * * * *","useSystemProxy":false}}}}'
+    gravitee.io/definition-plans: '{"basic-internal":{"name":"Internal Basic","description":"Internal Workbench/controller access","security":{"type":"KEY_LESS"},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Basic \")}"},"jwt-internal":{"name":"JWT Internal","description":"Keycloak internal realm JWT","security":{"type":"JWT","configuration":{"signature":"RSA_RS256","publicKeyResolver":"JWKS_URL","resolverParameter":"https://auth.suncoast.systems/realms/internal/protocol/openid-connect/certs","userClaim":"preferred_username","extractClaims":true}},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"{#jwt != null && #jwt.claims[\"iss\"] == \"https://auth.suncoast.systems/realms/internal\"}"},"jwt-external":{"name":"JWT External","description":"Keycloak external realm JWT","security":{"type":"JWT","configuration":{"signature":"RSA_RS256","publicKeyResolver":"JWKS_URL","resolverParameter":"https://auth.suncoast.systems/realms/external/protocol/openid-connect/certs","userClaim":"preferred_username","extractClaims":true}},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"{#jwt != null && #jwt.claims[\"iss\"] == \"https://auth.suncoast.systems/realms/external\"}"}}'
+    gravitee.io/definition-flows: '[{"name":"service-account","enabled":true,"request":[{"name":"mark-flow","policy":"transform-headers","enabled":true,"messageCondition":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Basic \")}","configuration":{"addHeaders":[{"name":"X-Policy-Matched","value":"service-account"}]}},{"name":"keycloak-service-token","policy":"policy-http-callout","enabled":true,"description":"Service account token for internal Basic callers","messageCondition":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Basic \")}","configuration":{"url":"{#properties[\"token_exchange_url\"]}","method":"POST","headers":[{"name":"Content-Type","value":"application/x-www-form-urlencoded"}],"body":"grant_type=client_credentials&client_id={#properties[\"token_exchange_client_id\"]}&client_secret={#properties[\"token_exchange_client_secret\"]}","exitOnError":false,"variables":[{"name":"service_token","value":"{#calloutResponse != null ? #jsonPath(#calloutResponse.content, ''$.access_token'') : null}"},{"name":"service_callout_status","value":"{#calloutResponse != null ? #calloutResponse.status : -1}"}]}},{"name":"strip-auth-header","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"service_token\"] != null}","configuration":{"removeHeaders":["Authorization","authorization"]}},{"name":"mark-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"service_token\"] != null}","configuration":{"addHeaders":[{"name":"X-Service-Token-Present","value":"true"}]}},{"name":"apply-service-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"service_token\"] != null}","configuration":{"addHeaders":[{"name":"Authorization","value":"Bearer {#context.attributes[\"service_token\"]}"}]}}],"response":[{"name":"debug-service-account-callout","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"service_callout_status\"] != null}","configuration":{"addHeaders":[{"name":"X-Keycloak-Service-Callout-Status","value":"{#context.attributes[\"service_callout_status\"]}"}]}}]},{"name":"token-exchange","enabled":true,"request":[{"name":"mark-flow","policy":"transform-headers","enabled":true,"messageCondition":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Bearer \") && #context.attributes[\"service_token\"] == null}","configuration":{"addHeaders":[{"name":"X-Policy-Matched","value":"token-exchange"}]}},{"name":"keycloak-token-exchange","policy":"policy-http-callout","enabled":true,"description":"Exchange token to internal realm","messageCondition":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Bearer \") && #context.attributes[\"service_token\"] == null}","configuration":{"url":"{#properties[\"token_exchange_url\"]}","method":"POST","headers":[{"name":"Content-Type","value":"application/x-www-form-urlencoded"}],"body":"grant_type=urn:ietf:params:oauth:grant-type:token-exchange&client_id={#properties[\"token_exchange_client_id\"]}&client_secret={#properties[\"token_exchange_client_secret\"]}&subject_token={#request.headers[\"authorization\"][0].substring(7)}","exitOnError":false,"variables":[{"name":"exchanged_token","value":"{#calloutResponse != null ? #jsonPath(#calloutResponse.content, ''$.access_token'') : null}"},{"name":"exchange_callout_status","value":"{#calloutResponse != null ? #calloutResponse.status : -1}"}]}},{"name":"strip-auth-header","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchanged_token\"] != null}","configuration":{"removeHeaders":["Authorization","authorization"]}},{"name":"mark-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchanged_token\"] != null}","configuration":{"addHeaders":[{"name":"X-Exchanged-Token-Present","value":"true"}]}},{"name":"apply-exchanged-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchanged_token\"] != null}","configuration":{"addHeaders":[{"name":"Authorization","value":"Bearer {#context.attributes[\"exchanged_token\"]}"}]}}],"response":[{"name":"debug-token-exchange-callout","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchange_callout_status\"] != null}","configuration":{"addHeaders":[{"name":"X-Keycloak-Exchange-Callout-Status","value":"{#context.attributes[\"exchange_callout_status\"]}"}]}}]}]'
+    gravitee.io/definition-response-templates: '{}'
+    gravitee.io/definition-analytics: '{"enabled":true,"logging":{"condition":"true","content":{"headers":true,"payload":false,"messageHeaders":false,"messageMetadata":false,"messagePayload":false},"mode":{"entrypoint":true,"endpoint":true},"phase":{"request":true,"response":true}}}'
+    gravitee.io/definition-entrypoints: '[]'
+spec:
+  selector:
+    app: kie-server
+  ports:
+    - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
+  type: ClusterIP
+
+---
+apiVersion: gravitee.io/v1alpha1
+kind: Application
+metadata:
+  name: rules-engine-internal
+  namespace: drools
+spec:
+  contextRef:
+    kind: ManagementContext
+    name: gravitee-default
+    namespace: k8s-api-gateway
+  name: rules-engine-internal
+  description: "Rules engine internal access"
+  settings:
+    app:
+      type: BACKEND_TO_BACKEND
+      clientId: rules-engine-internal
+
+---
+apiVersion: gravitee.io/v1alpha1
+kind: Subscription
+metadata:
+  name: kie-server-jwt-internal
+  namespace: drools
+spec:
+  api:
+    kind: ApiV4Definition
+    name: kie-server
+    namespace: drools
+  application:
+    kind: Application
+    name: rules-engine-internal
+    namespace: drools
+  plan: jwt-internal
+

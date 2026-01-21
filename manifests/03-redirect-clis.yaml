@@ -1,0 +1,132 @@
+# =========================
+# Redirect CLIs (WF23 expression-filter) – Workbench & KIE Server
+# =========================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workbench-nginx-config
+  namespace: drools
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+    http {
+        upstream backend {
+            server localhost:8080;
+        }
+        server {
+            listen 9080;
+            server_name _;
+            
+            # Root path redirects to business-central
+            location = / {
+                return 302 /business-central/;
+            }
+            
+            # Proxy all other requests to the backend
+            location / {
+                proxy_pass http://backend;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+        }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workbench-redirect-cli
+  namespace: drools
+data:
+  enable-redirect.cli: |
+    embed-server --std-out=echo
+    batch
+    /subsystem=undertow/configuration=filter/expression-filter=redirect-root:add(expression="path('/') -> redirect('/business-central/')")
+    /subsystem=undertow/configuration=filter/expression-filter=deny-basic-noncontroller:add(expression="not path-prefix('/business-central/rest/controller') and not path-prefix('/business-central/maven2') and regex(pattern='^Basic\\s', value=%{i,Authorization}) -> response-code(403)")
+    /subsystem=undertow/server=default-server/host=default-host/filter-ref=redirect-root:add
+    /subsystem=undertow/server=default-server/host=default-host/filter-ref=deny-basic-noncontroller:add
+    /subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=proxy-address-forwarding,value=true)
+    /subsystem=undertow/server=default-server/host=default-host:write-attribute(name=default-response-code,value=404)
+    run-batch
+    stop-embedded-server
+  run-cli.sh: |
+    #!/usr/bin/env sh
+    set -euo pipefail
+    echo "📄 Copying standalone configuration into /config..."
+    cp -a /opt/jboss/wildfly/standalone/configuration/* /config/
+    if [ -f /shared/application-users.properties ]; then
+      cp -a /shared/application-users.properties /config/application-users.properties
+    fi
+    if [ -f /shared/application-roles.properties ]; then
+      cp -a /shared/application-roles.properties /config/application-roles.properties
+    fi
+    echo "🛠️  Applying redirect CLI (Workbench)..."
+    /opt/jboss/wildfly/bin/jboss-cli.sh --file=/redirect/enable-redirect.cli
+    echo "📦 Persisting modified standalone.xml into /config..."
+    cp -a /opt/jboss/wildfly/standalone/configuration/standalone.xml /config/standalone.xml
+    echo "🎯 Creating ROOT.war deployment to serve business-central directly..."
+    echo "📁 Creating ROOT.war directory..."
+    mkdir -p /opt/jboss/wildfly/standalone/deployments/ROOT.war/WEB-INF || { echo "❌ Failed to create ROOT.war directory"; exit 1; }
+    echo "✅ ROOT.war directory created"
+    cat > /opt/jboss/wildfly/standalone/deployments/ROOT.war/WEB-INF/web.xml << 'EOF'
+    <?xml version="1.0" encoding="UTF-8"?>
+    <web-app xmlns="http://xmlns.jcp.org/xml/ns/javaee"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/javaee 
+             http://xmlns.jcp.org/xml/ns/javaee/web-app_3_1.xsd"
+             version="3.1">
+      <display-name>Root Redirect</display-name>
+      <welcome-file-list>
+        <welcome-file>index.html</welcome-file>
+      </welcome-file-list>
+    </web-app>
+    EOF
+    cat > /opt/jboss/wildfly/standalone/deployments/ROOT.war/index.html << 'EOF'
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Business Central</title>
+        <meta http-equiv="refresh" content="0; url=/business-central/">
+        <script>
+            // Immediate JavaScript redirect as backup
+            window.location.href = "/business-central/";
+        </script>
+    </head>
+    <body>
+        <p>Redirecting to <a href="/business-central/">Business Central</a>...</p>
+    </body>
+    </html>
+    EOF
+    echo "🚀 Marking ROOT.war for deployment..."
+    touch /opt/jboss/wildfly/standalone/deployments/ROOT.war.dodeploy || { echo "❌ Failed to create deploy marker"; exit 1; }
+    echo "✅ ROOT.war deployment configured successfully"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kieserver-redirect-cli
+  namespace: drools
+data:
+  enable-redirect.cli: |
+    embed-server --std-out=echo --server-config=standalone-full-kie-server.xml
+    batch
+    /subsystem=undertow/configuration=filter/expression-filter=redirect-root:add(expression="path('/') -> redirect('/kie-server/services/rest/server')")
+    /subsystem=undertow/server=default-server/host=default-host/filter-ref=redirect-root:add
+    run-batch
+    stop-embedded-server
+  run-cli.sh: |
+    #!/usr/bin/env sh
+    set -euo pipefail
+    echo "📄 Copying standalone-full configuration into /config..."
+    cp -a /opt/jboss/wildfly/standalone/configuration/* /config/
+    echo "🛠️  Applying redirect CLI (KIE Server)..."
+    /opt/jboss/wildfly/bin/jboss-cli.sh --file=/redirect/enable-redirect.cli
+    echo "📦 Persisting modified standalone-full-kie-server.xml into /config..."
+    cp -a /opt/jboss/wildfly/standalone/configuration/standalone-full-kie-server.xml /config/standalone-full-kie-server.xml
+    echo "✅ Redirect configured"
+

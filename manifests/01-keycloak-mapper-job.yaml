@@ -1,0 +1,701 @@
+# =========================
+# Keycloak Mapper – emit top-level roles claim for Workbench
+# =========================
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-workbench-roles-claim
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  backoffLimit: 4
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: "disabled"
+    spec:
+      serviceAccountName: keycloak-admin-job
+      restartPolicy: OnFailure
+      volumes:
+        - name: keycloak-admin-env
+          emptyDir: {}
+      initContainers:
+        - name: vault-keycloak-admin
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -eu
+              apk add --no-cache jq curl
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+
+              for i in $(seq 1 30); do
+                VAULT_TOKEN="$(vault write -field=token auth/kubernetes/login \
+                  role=keycloak-admin-job \
+                  jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token) 2>/dev/null || true)"
+                if [ -n "$VAULT_TOKEN" ]; then
+                  break
+                fi
+                echo "⏳ Waiting for Vault role keycloak-admin-job..."
+                sleep 5
+              done
+              if [ -z "${VAULT_TOKEN:-}" ]; then
+                echo "❌ Vault auth failed for keycloak-admin-job"
+                exit 1
+              fi
+              export VAULT_TOKEN
+
+              ADMIN_JSON="$(vault kv get -format=json secret/keycloak/admin)"
+              ADMIN_USER="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.username // empty')"
+              ADMIN_PASS="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.password // empty')"
+              if [ -z "$ADMIN_USER" ] || [ -z "$ADMIN_PASS" ]; then
+                echo "❌ Missing Keycloak admin credentials in Vault"
+                exit 1
+              fi
+
+              CONTROLLER_JSON="$(vault kv get -format=json secret/drools/admin)"
+              CONTROLLER_USER="$(printf '%s' "$CONTROLLER_JSON" | jq -r '.data.data.username // empty')"
+              CONTROLLER_PASS="$(printf '%s' "$CONTROLLER_JSON" | jq -r '.data.data.password // empty')"
+              if [ -z "$CONTROLLER_USER" ] || [ -z "$CONTROLLER_PASS" ]; then
+                echo "❌ Missing drools controller credentials in Vault"
+                exit 1
+              fi
+
+              CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-workbench)"
+              CLIENT_ID="$(printf '%s' "$CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "$CLIENT_ID" ]; then
+                echo "❌ Missing drools-workbench client id in Vault"
+                exit 1
+              fi
+
+              KIE_CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-kie-server-service)"
+              KIE_CLIENT_ID="$(printf '%s' "$KIE_CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "$KIE_CLIENT_ID" ]; then
+                echo "❌ Missing drools-kie-server-service client id in Vault"
+                exit 1
+              fi
+
+              KIE_CLIENT_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server-service)"
+              KIE_SERVER_SERVICE_CLIENT_SECRET="$(printf '%s' "$KIE_CLIENT_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "$KIE_SERVER_SERVICE_CLIENT_SECRET" ]; then
+                echo "❌ Missing drools-kie-server-service client secret in Vault"
+                exit 1
+              fi
+
+              KIE_SERVER_CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-kie-server)"
+              KIE_SERVER_CLIENT_ID="$(printf '%s' "$KIE_SERVER_CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "$KIE_SERVER_CLIENT_ID" ]; then
+                echo "❌ Missing drools-kie-server client id in Vault"
+                exit 1
+              fi
+
+              KIE_SERVER_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server)"
+              KIE_SERVER_CLIENT_SECRET="$(printf '%s' "$KIE_SERVER_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "$KIE_SERVER_CLIENT_SECRET" ]; then
+                echo "❌ Missing drools-kie-server client secret in Vault"
+                exit 1
+              fi
+
+              KOGITO_CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-kogito-console)"
+              KOGITO_CLIENT_ID="$(printf '%s' "$KOGITO_CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "$KOGITO_CLIENT_ID" ]; then
+                echo "❌ Missing kogito-console client id in Vault"
+                exit 1
+              fi
+
+              KIE_USER_JSON="$(vault kv get -format=json secret/drools/kie-user)"
+              KIE_SERVER_USER="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.username // empty')"
+              KIE_SERVER_PASSWORD="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.password // empty')"
+              if [ -z "$KIE_SERVER_USER" ] || [ -z "$KIE_SERVER_PASSWORD" ]; then
+                echo "❌ Missing drools kie-user credentials in Vault"
+                exit 1
+              fi
+
+              cat > /shared/keycloak-env.sh <<EOF
+              export KEYCLOAK_ADMIN="${ADMIN_USER}"
+              export KEYCLOAK_ADMIN_PASSWORD="${ADMIN_PASS}"
+              export CONTROLLER_USER="${CONTROLLER_USER}"
+              export CONTROLLER_PASSWORD="${CONTROLLER_PASS}"
+              export WORKBENCH_CLIENT_ID="${CLIENT_ID}"
+              export KIE_SERVER_SERVICE_CLIENT_ID="${KIE_CLIENT_ID}"
+              export KIE_SERVER_SERVICE_CLIENT_SECRET="${KIE_SERVER_SERVICE_CLIENT_SECRET}"
+              export KIE_SERVER_CLIENT_ID="${KIE_SERVER_CLIENT_ID}"
+              export KIE_SERVER_CLIENT_SECRET="${KIE_SERVER_CLIENT_SECRET}"
+              export KIE_SERVER_USER="${KIE_SERVER_USER}"
+              export KIE_SERVER_PASSWORD="${KIE_SERVER_PASSWORD}"
+              export KOGITO_CONSOLE_CLIENT_ID="${KOGITO_CLIENT_ID}"
+              EOF
+          volumeMounts:
+            - { name: keycloak-admin-env, mountPath: /shared }
+      containers:
+        - name: keycloak-mapper
+          image: ghcr.io/dotcomrow/keycloak-image:24.0.5
+          command: ["/bin/bash","-lc"]
+          args:
+            - |
+              set -euo pipefail
+              . /shared/keycloak-env.sh
+
+              KC_SERVER="http://keycloak.keycloak.svc.cluster.local:8080"
+              ADMIN_REALM="master"
+              REALM="internal"
+              KCADM="/opt/keycloak/bin/kcadm.sh"
+              MAPPER_NAME="roles-claim"
+              CLIENT_ROLE_MAPPER_NAME="client-roles-claim"
+              ROLE_LIST="admin rest-all developer analyst manager process-admin user kie-server"
+              WORKBENCH_PUBLIC_URL="https://workbench-drools.teleport.app.suncoast.systems"
+              CONTROLLER_ROLE_LIST="admin rest-all kie-server"
+              CONTROLLER_EMAIL="${CONTROLLER_EMAIL:-drools-controller@internal.local}"
+              CONTROLLER_FIRST_NAME="${CONTROLLER_FIRST_NAME:-Drools}"
+              CONTROLLER_LAST_NAME="${CONTROLLER_LAST_NAME:-Controller}"
+              KIE_SERVER_EMAIL="${KIE_SERVER_EMAIL:-drools-kie-server@internal.local}"
+              KIE_SERVER_FIRST_NAME="${KIE_SERVER_FIRST_NAME:-KIE}"
+              KIE_SERVER_LAST_NAME="${KIE_SERVER_LAST_NAME:-Server}"
+
+              if [ -z "${KIE_SERVER_SERVICE_CLIENT_ID:-}" ]; then
+                echo "❌ Missing KIE_SERVER_SERVICE_CLIENT_ID in keycloak-env.sh"
+                exit 1
+              fi
+              if [ -z "${KIE_SERVER_SERVICE_CLIENT_SECRET:-}" ]; then
+                echo "❌ Missing KIE_SERVER_SERVICE_CLIENT_SECRET in keycloak-env.sh"
+                exit 1
+              fi
+              if [ -z "${KIE_SERVER_CLIENT_ID:-}" ] || [ -z "${KIE_SERVER_CLIENT_SECRET:-}" ]; then
+                echo "❌ Missing KIE_SERVER_CLIENT_ID or KIE_SERVER_CLIENT_SECRET in keycloak-env.sh"
+                exit 1
+              fi
+              if [ -z "${KOGITO_CONSOLE_CLIENT_ID:-}" ]; then
+                echo "❌ Missing KOGITO_CONSOLE_CLIENT_ID in keycloak-env.sh"
+                exit 1
+              fi
+              if [ -z "${CONTROLLER_USER:-}" ] || [ -z "${CONTROLLER_PASSWORD:-}" ]; then
+                echo "❌ Missing CONTROLLER_USER in keycloak-env.sh"
+                exit 1
+              fi
+              if [ -z "${KIE_SERVER_USER:-}" ] || [ -z "${KIE_SERVER_PASSWORD:-}" ]; then
+                echo "❌ Missing KIE_SERVER_USER or KIE_SERVER_PASSWORD in keycloak-env.sh"
+                exit 1
+              fi
+
+              ensure_roles_mapper() {
+                local client_id="$1"
+                local client_uuid=""
+                local existing=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  client_uuid="$line"
+                  break
+                done < <($KCADM get clients -r "$REALM" -q "clientId=$client_id" \
+                  --fields id --format csv)
+                if [ -z "$client_uuid" ] || [ "$client_uuid" = "id" ]; then
+                  echo "❌ Keycloak client not found: $client_id"
+                  exit 1
+                fi
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id,name" ] || [ "$line" = "\"id\",\"name\"" ]; then
+                    continue
+                  fi
+                  IFS=, read -r id name <<< "$line"
+                  id=${id#\"}
+                  id=${id%\"}
+                  name=${name#\"}
+                  name=${name%\"}
+                  if [ "$name" = "$MAPPER_NAME" ]; then
+                    existing="$id"
+                    break
+                  fi
+                done < <($KCADM get "clients/$client_uuid/protocol-mappers/models" -r "$REALM" \
+                  --fields id,name --format csv)
+
+                if [ -n "$existing" ] && [ "$existing" != "id" ]; then
+                  echo "🔁 Updating Keycloak mapper $MAPPER_NAME for $client_id"
+                  $KCADM update "clients/$client_uuid/protocol-mappers/models/$existing" -r "$REALM" \
+                    -s "name=$MAPPER_NAME" \
+                    -s "protocol=openid-connect" \
+                    -s "protocolMapper=oidc-usermodel-realm-role-mapper" \
+                    -s "config.\"claim.name\"=realm_access.roles" \
+                    -s "config.\"jsonType.label\"=String" \
+                    -s "config.\"multivalued\"=true" \
+                    -s "config.\"access.token.claim\"=true" \
+                    -s "config.\"id.token.claim\"=true" \
+                    -s "config.\"userinfo.token.claim\"=false"
+                  echo "✅ Updated Keycloak mapper $MAPPER_NAME for $client_id"
+                  return 0
+                fi
+
+                $KCADM create "clients/$client_uuid/protocol-mappers/models" -r "$REALM" \
+                  -s "name=$MAPPER_NAME" \
+                  -s "protocol=openid-connect" \
+                  -s "protocolMapper=oidc-usermodel-realm-role-mapper" \
+                  -s "config.\"claim.name\"=realm_access.roles" \
+                  -s "config.\"jsonType.label\"=String" \
+                  -s "config.\"multivalued\"=true" \
+                  -s "config.\"access.token.claim\"=true" \
+                  -s "config.\"id.token.claim\"=true" \
+                  -s "config.\"userinfo.token.claim\"=false"
+                echo "✅ Added Keycloak mapper $MAPPER_NAME for $client_id"
+              }
+
+              ensure_client_roles_mapper() {
+                local client_id="$1"
+                local client_uuid=""
+                local existing=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  client_uuid="$line"
+                  break
+                done < <($KCADM get clients -r "$REALM" -q "clientId=$client_id" \
+                  --fields id --format csv)
+                if [ -z "$client_uuid" ] || [ "$client_uuid" = "id" ]; then
+                  echo "❌ Keycloak client not found: $client_id"
+                  exit 1
+                fi
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id,name" ] || [ "$line" = "\"id\",\"name\"" ]; then
+                    continue
+                  fi
+                  IFS=, read -r id name <<< "$line"
+                  id=${id#\"}
+                  id=${id%\"}
+                  name=${name#\"}
+                  name=${name%\"}
+                  if [ "$name" = "$CLIENT_ROLE_MAPPER_NAME" ]; then
+                    existing="$id"
+                    break
+                  fi
+                done < <($KCADM get "clients/$client_uuid/protocol-mappers/models" -r "$REALM" \
+                  --fields id,name --format csv)
+
+                if [ -n "$existing" ] && [ "$existing" != "id" ]; then
+                  echo "🔁 Updating Keycloak mapper $CLIENT_ROLE_MAPPER_NAME for $client_id"
+                  $KCADM update "clients/$client_uuid/protocol-mappers/models/$existing" -r "$REALM" \
+                    -s "name=$CLIENT_ROLE_MAPPER_NAME" \
+                    -s "protocol=openid-connect" \
+                    -s "protocolMapper=oidc-usermodel-client-role-mapper" \
+                    -s "config.\"usermodel.clientRoleMapping.clientId\"=$client_id" \
+                    -s "config.\"claim.name\"=resource_access.${client_id}.roles" \
+                    -s "config.\"jsonType.label\"=String" \
+                    -s "config.\"multivalued\"=true" \
+                    -s "config.\"access.token.claim\"=true" \
+                    -s "config.\"id.token.claim\"=true" \
+                    -s "config.\"userinfo.token.claim\"=false"
+                  echo "✅ Updated Keycloak mapper $CLIENT_ROLE_MAPPER_NAME for $client_id"
+                  return 0
+                fi
+
+                $KCADM create "clients/$client_uuid/protocol-mappers/models" -r "$REALM" \
+                  -s "name=$CLIENT_ROLE_MAPPER_NAME" \
+                  -s "protocol=openid-connect" \
+                  -s "protocolMapper=oidc-usermodel-client-role-mapper" \
+                  -s "config.\"usermodel.clientRoleMapping.clientId\"=$client_id" \
+                  -s "config.\"claim.name\"=resource_access.${client_id}.roles" \
+                  -s "config.\"jsonType.label\"=String" \
+                  -s "config.\"multivalued\"=true" \
+                  -s "config.\"access.token.claim\"=true" \
+                  -s "config.\"id.token.claim\"=true" \
+                  -s "config.\"userinfo.token.claim\"=false"
+                echo "✅ Added Keycloak mapper $CLIENT_ROLE_MAPPER_NAME for $client_id"
+              }
+
+              ensure_workbench_redirects() {
+                local client_id="$1"
+                local client_uuid=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  client_uuid="$line"
+                  break
+                done < <($KCADM get clients -r "$REALM" -q "clientId=$client_id" \
+                  --fields id --format csv)
+                if [ -z "$client_uuid" ] || [ "$client_uuid" = "id" ]; then
+                  echo "❌ Keycloak client not found: $client_id"
+                  exit 1
+                fi
+
+                echo "Updating redirect URIs for $client_id"
+                $KCADM update "clients/$client_uuid" -r "$REALM" \
+                  -s "redirectUris=[\"${WORKBENCH_PUBLIC_URL}/*\"]" \
+                  -s "webOrigins=[\"${WORKBENCH_PUBLIC_URL}\"]"
+                echo "Updated redirect URIs for $client_id"
+              }
+
+              ensure_direct_access_grants() {
+                local client_id="$1"
+                local client_uuid=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  client_uuid="$line"
+                  break
+                done < <($KCADM get clients -r "$REALM" -q "clientId=$client_id" \
+                  --fields id --format csv)
+                if [ -z "$client_uuid" ] || [ "$client_uuid" = "id" ]; then
+                  echo "❌ Keycloak client not found: $client_id"
+                  exit 1
+                fi
+
+                echo "Enabling direct access grants for $client_id"
+                $KCADM update "clients/$client_uuid" -r "$REALM" \
+                  -s "directAccessGrantsEnabled=true"
+                echo "Enabled direct access grants for $client_id"
+              }
+
+              ensure_client_secret() {
+                local client_id="$1"
+                local client_secret="$2"
+                local client_uuid=""
+
+                client_uuid="$(get_client_uuid "$client_id")"
+                if [ -z "$client_uuid" ] || [ "$client_uuid" = "id" ]; then
+                  echo "❌ Keycloak client not found: $client_id"
+                  exit 1
+                fi
+
+                echo "🔁 Updating client secret for $client_id"
+                $KCADM update "clients/$client_uuid" -r "$REALM" \
+                  -s "publicClient=false" \
+                  -s "clientAuthenticatorType=client-secret" >/dev/null 2>&1 || true
+                $KCADM update "clients/$client_uuid/client-secret" -r "$REALM" \
+                  -s "value=$client_secret" >/dev/null 2>&1 || true
+              }
+
+              ensure_controller_user() {
+                local username="$1"
+                local password="$2"
+                local user_id=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  user_id="$line"
+                  break
+                done < <($KCADM get users -r "$REALM" -q "username=$username" \
+                  --fields id --format csv)
+
+                if [ -z "$user_id" ] || [ "$user_id" = "id" ]; then
+                  echo "Creating controller user $username"
+                  $KCADM create users -r "$REALM" \
+                    -s "username=$username" \
+                    -s "enabled=true" \
+                    -s "email=$CONTROLLER_EMAIL" \
+                    -s "emailVerified=true" \
+                    -s "firstName=$CONTROLLER_FIRST_NAME" \
+                    -s "lastName=$CONTROLLER_LAST_NAME" >/dev/null
+                else
+                  echo "Controller user $username already exists"
+                fi
+
+                $KCADM set-password -r "$REALM" --username "$username" \
+                  --new-password "$password" --temporary=false >/dev/null
+
+                user_id=""
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  user_id="$line"
+                  break
+                done < <($KCADM get users -r "$REALM" -q "username=$username" \
+                  --fields id --format csv)
+                if [ -n "$user_id" ] && [ "$user_id" != "id" ]; then
+                  $KCADM update "users/$user_id" -r "$REALM" \
+                    -s "enabled=true" \
+                    -s "email=$CONTROLLER_EMAIL" \
+                    -s "firstName=$CONTROLLER_FIRST_NAME" \
+                    -s "lastName=$CONTROLLER_LAST_NAME" \
+                    -s "emailVerified=true" \
+                    -s "requiredActions=[]" >/dev/null
+                fi
+              }
+
+              ensure_kie_user() {
+                local username="$1"
+                local password="$2"
+                local user_id=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  user_id="$line"
+                  break
+                done < <($KCADM get users -r "$REALM" -q "username=$username" \
+                  --fields id --format csv)
+
+                if [ -z "$user_id" ] || [ "$user_id" = "id" ]; then
+                  echo "Creating KIE server user $username"
+                  $KCADM create users -r "$REALM" \
+                    -s "username=$username" \
+                    -s "enabled=true" \
+                    -s "email=$KIE_SERVER_EMAIL" \
+                    -s "emailVerified=true" \
+                    -s "firstName=$KIE_SERVER_FIRST_NAME" \
+                    -s "lastName=$KIE_SERVER_LAST_NAME" >/dev/null
+                else
+                  echo "KIE server user $username already exists"
+                fi
+
+                $KCADM set-password -r "$REALM" --username "$username" \
+                  --new-password "$password" --temporary=false >/dev/null
+
+                user_id=""
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  user_id="$line"
+                  break
+                done < <($KCADM get users -r "$REALM" -q "username=$username" \
+                  --fields id --format csv)
+                if [ -n "$user_id" ] && [ "$user_id" != "id" ]; then
+                  $KCADM update "users/$user_id" -r "$REALM" \
+                    -s "enabled=true" \
+                    -s "email=$KIE_SERVER_EMAIL" \
+                    -s "firstName=$KIE_SERVER_FIRST_NAME" \
+                    -s "lastName=$KIE_SERVER_LAST_NAME" \
+                    -s "emailVerified=true" \
+                    -s "requiredActions=[]" >/dev/null
+                fi
+              }
+
+              get_client_uuid() {
+                local client_id="$1"
+                local client_uuid=""
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  client_uuid="$line"
+                  break
+                done < <($KCADM get clients -r "$REALM" -q "clientId=$client_id" \
+                  --fields id --format csv)
+                printf '%s' "$client_uuid"
+              }
+
+              ensure_client_roles() {
+                local client_uuid="$1"
+                local role_list="$2"
+
+                for role in $role_list; do
+                  if $KCADM get "clients/$client_uuid/roles/$role" -r "$REALM" >/dev/null 2>&1; then
+                    echo "✅ Client role exists: $role"
+                  else
+                    echo "Creating client role: $role"
+                    $KCADM create "clients/$client_uuid/roles" -r "$REALM" -s "name=$role" >/dev/null
+                  fi
+                done
+              }
+
+              assign_client_roles_to_user() {
+                local username="$1"
+                local client_id="$2"
+                local role_list="$3"
+
+                for role in $role_list; do
+                  if $KCADM add-roles -r "$REALM" --uusername "$username" \
+                    --cclientid "$client_id" --rolename "$role" >/dev/null 2>&1; then
+                    echo "✅ Assigned client role $role to $username on $client_id"
+                  else
+                    echo "Client role $role already assigned to $username on $client_id"
+                  fi
+                done
+              }
+              for i in $(seq 1 30); do
+                if $KCADM config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
+                  --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+                  break
+                fi
+                echo "⏳ Waiting for Keycloak admin API..."
+                sleep 5
+              done
+
+              if ! $KCADM config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
+                --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+                echo "❌ Unable to authenticate to Keycloak admin API"
+                exit 1
+              fi
+
+              find_direct_grant_flow() {
+                local flow=""
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "alias" ] || [ "$line" = "\"alias\"" ]; then
+                    continue
+                  fi
+                  line=${line#\"}
+                  line=${line%\"}
+                  case "$line" in
+                    "direct grant"|"direct grant flow"|"direct-grant")
+                      flow="$line"
+                      break
+                      ;;
+                  esac
+                done < <($KCADM get authentication/flows -r "$REALM" --fields alias --format csv)
+                printf '%s' "$flow"
+              }
+
+              enable_direct_grant_flow() {
+                local realm="$1"
+                local current=""
+                current="$($KCADM get "realms/$realm" --fields directGrantFlow --format csv | sed -n '2{s/\r//;s/\"//g;s/,.*//;p;}')"
+                if [ "$current" != "disabled-direct-grant" ] && [ -n "$current" ]; then
+                  echo "Direct grant flow already enabled for $realm: $current"
+                  return 0
+                fi
+                local flow=""
+                flow="$(find_direct_grant_flow)"
+                if [ -z "$flow" ]; then
+                  echo "❌ Direct grant flow not found in realm $realm; leaving disabled"
+                  return 1
+                fi
+                echo "Enabling direct grant flow for $realm: $flow"
+                $KCADM update "realms/$realm" -s "directGrantFlow=$flow" >/dev/null 2>&1 || true
+              }
+
+              enable_direct_grant_flow "$REALM"
+
+              ensure_roles_mapper "$WORKBENCH_CLIENT_ID"
+              ensure_roles_mapper "$KIE_SERVER_SERVICE_CLIENT_ID"
+              ensure_roles_mapper "$KOGITO_CONSOLE_CLIENT_ID"
+              ensure_client_roles_mapper "$WORKBENCH_CLIENT_ID"
+              ensure_client_roles_mapper "$KOGITO_CONSOLE_CLIENT_ID"
+              ensure_workbench_redirects "$WORKBENCH_CLIENT_ID"
+              ensure_direct_access_grants "$WORKBENCH_CLIENT_ID"
+              ensure_direct_access_grants "$KIE_SERVER_CLIENT_ID"
+              ensure_client_secret "$KIE_SERVER_CLIENT_ID" "$KIE_SERVER_CLIENT_SECRET"
+              ensure_client_secret "$KIE_SERVER_SERVICE_CLIENT_ID" "$KIE_SERVER_SERVICE_CLIENT_SECRET"
+              ensure_controller_user "$CONTROLLER_USER" "$CONTROLLER_PASSWORD"
+              ensure_kie_user "$KIE_SERVER_USER" "$KIE_SERVER_PASSWORD"
+
+              WORKBENCH_CLIENT_UUID="$(get_client_uuid "$WORKBENCH_CLIENT_ID")"
+              if [ -z "$WORKBENCH_CLIENT_UUID" ] || [ "$WORKBENCH_CLIENT_UUID" = "id" ]; then
+                echo "❌ Keycloak client not found: $WORKBENCH_CLIENT_ID"
+                exit 1
+              fi
+              ensure_client_roles "$WORKBENCH_CLIENT_UUID" "$CONTROLLER_ROLE_LIST"
+
+              KIE_CLIENT_UUID=""
+              while IFS= read -r line; do
+                line=${line%$'\r'}
+                if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
+                  continue
+                fi
+                line=${line#\"}
+                line=${line%\"}
+                KIE_CLIENT_UUID="$line"
+                break
+              done < <($KCADM get clients -r "$REALM" -q "clientId=$KIE_SERVER_SERVICE_CLIENT_ID" \
+                --fields id --format csv)
+              if [ -z "$KIE_CLIENT_UUID" ] || [ "$KIE_CLIENT_UUID" = "id" ]; then
+                echo "❌ Keycloak client not found: $KIE_SERVER_SERVICE_CLIENT_ID"
+                exit 1
+              fi
+
+              $KCADM update "clients/$KIE_CLIENT_UUID" -r "$REALM" -s "serviceAccountsEnabled=true" >/dev/null 2>&1 || true
+
+              SA_ID=""
+              SA_USERNAME=""
+              while IFS= read -r line; do
+                line=${line%$'\r'}
+                if [ -z "$line" ] || [ "$line" = "id,username" ] || [ "$line" = "\"id\",\"username\"" ]; then
+                  continue
+                fi
+                IFS=, read -r id name <<< "$line"
+                id=${id#\"}
+                id=${id%\"}
+                name=${name#\"}
+                name=${name%\"}
+                SA_ID="$id"
+                SA_USERNAME="$name"
+                break
+              done < <($KCADM get "clients/$KIE_CLIENT_UUID/service-account-user" -r "$REALM" \
+                --fields id,username --format csv)
+              if [ -z "$SA_ID" ] || [ -z "$SA_USERNAME" ]; then
+                echo "❌ Unable to resolve service account user for $KIE_SERVER_SERVICE_CLIENT_ID"
+                exit 1
+              fi
+
+              for role in $ROLE_LIST; do
+                if $KCADM get "roles/$role" -r "$REALM" >/dev/null 2>&1; then
+                  echo "✅ Realm role exists: $role"
+                else
+                  echo "Creating realm role: $role"
+                  $KCADM create roles -r "$REALM" -s "name=$role"
+                fi
+              done
+
+              for role in $ROLE_LIST; do
+                if $KCADM add-roles -r "$REALM" --uusername "$SA_USERNAME" --rolename "$role" >/dev/null 2>&1; then
+                  echo "✅ Assigned role $role to service account $SA_USERNAME"
+                else
+                  echo "Role $role already assigned to service account $SA_USERNAME"
+                fi
+              done
+
+              for role in $CONTROLLER_ROLE_LIST; do
+                if $KCADM add-roles -r "$REALM" --uusername "$CONTROLLER_USER" --rolename "$role" >/dev/null 2>&1; then
+                  echo "✅ Assigned role $role to controller user $CONTROLLER_USER"
+                else
+                  echo "Role $role already assigned to controller user $CONTROLLER_USER"
+                fi
+              done
+
+              for role in $CONTROLLER_ROLE_LIST; do
+                if $KCADM add-roles -r "$REALM" --uusername "$KIE_SERVER_USER" --rolename "$role" >/dev/null 2>&1; then
+                  echo "✅ Assigned role $role to KIE server user $KIE_SERVER_USER"
+                else
+                  echo "Role $role already assigned to KIE server user $KIE_SERVER_USER"
+                fi
+              done
+
+              assign_client_roles_to_user "$CONTROLLER_USER" "$WORKBENCH_CLIENT_ID" "$CONTROLLER_ROLE_LIST"
+          volumeMounts:
+            - { name: keycloak-admin-env, mountPath: /shared }
+

@@ -1,0 +1,107 @@
+# =========================
+# Kogito Task Console (UI)
+# =========================
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kogito-task-console
+  namespace: drools
+  labels: { app: kogito-task-console }
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kogito-task-console }
+  template:
+    metadata:
+      labels: { app: kogito-task-console }
+    spec:
+      serviceAccountName: drools-kogito-console
+      volumes:
+        - name: vault-secrets
+          emptyDir: {}
+        - name: console-entrypoint
+          configMap:
+            name: kogito-console-entrypoint
+            items:
+              - { key: run-console.sh, path: run-console.sh, mode: 0555 }
+      initContainers:
+        - name: vault-kogito-console
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+              apk add --no-cache jq curl
+              VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
+                role=drools \
+                jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token))
+              export VAULT_TOKEN
+
+              ID_JSON="$(vault kv get -format=json secret/keycloak-client-id-kogito-console 2>/dev/null || true)"
+              SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-kogito-console 2>/dev/null || true)"
+              CLIENT_ID="$(printf '%s' "$ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              CLIENT_SECRET="$(printf '%s' "$SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "${CLIENT_ID:-}" ] || [ -z "${CLIENT_SECRET:-}" ]; then
+                echo "❌ Missing kogito console client id/secret in Vault"
+                exit 1
+              fi
+              {
+                echo "export KOGITO_CONSOLES_KEYCLOAK_CONFIG_CLIENT_ID=\"$CLIENT_ID\""
+                echo "export KOGITO_CONSOLES_KEYCLOAK_CLIENT_ID=\"$CLIENT_ID\""
+                echo "export KOGITO_CONSOLES_KEYCLOAK_CLIENT_SECRET=\"$CLIENT_SECRET\""
+              } > /shared/kogito-console-env.sh
+          volumeMounts:
+            - { name: vault-secrets, mountPath: /shared }
+      containers:
+        - name: kogito-task-console
+          image: quay.io/kiegroup/kogito-task-console:1.44.1
+          command: ["/bin/sh", "-c"]
+          args: ["/entrypoint/run-console.sh"]
+          ports: [{ containerPort: 8080 }]
+          env:
+            - { name: KOGITO_DATAINDEX_HTTP_URL, value: "https://kogito-task-console-drools.teleport.app.suncoast.systems/graphql" }
+            - { name: KOGITO_DATAINDEX_WS_URL, value: "wss://kogito-task-console-drools.teleport.app.suncoast.systems/graphql" }
+            - { name: KOGITO_JOBS_SERVICE_URL, value: "https://kogito-task-console-drools.teleport.app.suncoast.systems/jobs" }
+            - { name: QUARKUS_HTTP_CORS, value: "true" }
+            - { name: QUARKUS_HTTP_CORS_ORIGINS, value: "https://kogito-task-console-drools.teleport.app.suncoast.systems,https://kogito-console-drools.teleport.app.suncoast.systems,https://teleport.app.suncoast.systems" }
+            - { name: QUARKUS_HTTP_CORS_HEADERS, value: "authorization,content-type,accept,origin,referer,cache-control,pragma" }
+            - { name: QUARKUS_HTTP_CORS_METHODS, value: "GET,POST,PUT,DELETE,OPTIONS,PATCH" }
+            - { name: QUARKUS_HTTP_CORS_ACCESS_CONTROL_ALLOW_CREDENTIALS, value: "true" }
+          envFrom:
+            - configMapRef:
+                name: kogito-console-config
+          readinessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 5
+          livenessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - { name: vault-secrets, mountPath: /vault-secrets }
+            - { name: console-entrypoint, mountPath: /entrypoint }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kogito-task-console
+  namespace: drools
+  labels:
+    app: kogito-task-console
+spec:
+  selector:
+    app: kogito-task-console
+  ports:
+    - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
+  type: ClusterIP
+

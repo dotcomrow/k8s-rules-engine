@@ -1,0 +1,439 @@
+# =========================
+# Vault and YugabyteDB Initialization Jobs
+# =========================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: copy-drools-vault-root-token
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: default
+      restartPolicy: Never
+      containers:
+        - name: copy-secret
+          image: alpine/k8s:1.31.4
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              echo "🔁 Copying 'vault-root-token' from vault → drools..."
+              kubectl get secret vault-root-token -n vault -o yaml | \
+                sed 's/namespace: vault/namespace: drools/' | \
+                kubectl apply -f -
+              echo "✅ Secret copied successfully."
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: drools-yugabyte-config
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: "disabled"
+    spec:
+      restartPolicy: Never
+      serviceAccountName: default
+      volumes:
+        - name: root-token
+          secret:
+            secretName: vault-root-token
+      containers:
+        - name: setup-role
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
+              PGPORT=5433
+              DB=drools
+              ROLE_GROUP=drools
+              ROLE_OWNER=drools_app
+              VAULTADMIN_USER=vaultadmin
+              PGCONNECT_TIMEOUT=5
+              PGAPPNAME="drools-yugabyte-config"
+              export PGCONNECT_TIMEOUT PGAPPNAME
+
+              run_psql_ddl() {
+                local db="$1"
+                local sql="$2"
+                local user="${3:-$VAULTADMIN_USER}"
+                local attempt=1
+                local max=5
+                local output status
+
+                while :; do
+                  if output="$(psql -h "$PGHOST" -p "$PGPORT" -U "$user" -d "$db" -v ON_ERROR_STOP=1 -c "$sql" 2>&1)"; then
+                    printf '%s\n' "$output"
+                    return 0
+                  fi
+                  status=$?
+                  printf '%s\n' "$output"
+                  if printf '%s\n' "$output" | grep -q "Restarting a DDL transaction not supported"; then
+                    if [ $attempt -ge $max ]; then
+                      echo "❌ DDL failed after $max attempts"
+                      return $status
+                    fi
+                    attempt=$((attempt+1))
+                    echo "⚠️  Yugabyte DDL restart, retrying in 2s ($attempt/$max)..."
+                    sleep 2
+                    continue
+                  fi
+                  return $status
+                done
+              }
+
+              wait_for_admin_conn() {
+                local attempt=1
+                local max=40
+                local out
+                while :; do
+                  if out="$(PGPASSWORD="$VAULTADMIN_PASS" psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT version();" 2>&1)"; then
+                    echo "✅ Preflight (admin) connected to yugabyte: ${out:-ok}"
+                    return 0
+                  fi
+                  if [ $attempt -ge $max ]; then
+                    echo "❌ Preflight (admin) failed after $max attempts:"
+                    printf '%s\n' "$out"
+                    exit 1
+                  fi
+                  echo "⏳ Waiting for admin DB connection ($attempt/$max)..."
+                  attempt=$((attempt+1))
+                  sleep 3
+                done
+              }
+
+              apk add --no-cache postgresql15-client jq netcat-openbsd curl
+
+              export PATH="$PATH:/vault-bin"
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+
+              while [ ! -f /vault-token/VAULT_TOKEN ]; do
+                echo "🔁 Waiting for Vault token file..."
+                sleep 2
+              done
+              export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+
+              gen_pass() {
+                # Vault CLI treats leading @ as "read from file", so avoid passwords beginning with @
+                while :; do
+                  P="$(tr -dc 'A-Za-z0-9@#%^+=_' </dev/urandom | head -c 32)"
+                  case "$P" in @*) continue ;; esac
+                  printf '%s' "$P"
+                  return
+                done
+              }
+
+              echo "🧩 Ensuring KV v2 at 'secret/'..."
+              while :; do
+                if vault secrets list -format=json 2>/dev/null \
+                  | jq -e '."secret/".type=="kv" and ."secret/".options.version=="2"' >/dev/null; then
+                  echo "✅ 'secret/' is KVv2"; break
+                fi
+                if vault secrets list -format=json 2>/dev/null | jq -e 'has("secret/")' >/dev/null; then
+                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."; exit 1
+                fi
+                vault secrets enable -path=secret -version=2 kv && break
+                sleep 2
+              done
+
+              echo "🔐 Seeding drools admin + kie-user (if missing)..."
+              if ! vault kv get -format=json secret/drools/admin >/dev/null 2>&1; then
+                PASS="$(gen_pass)"
+                vault kv put secret/drools/admin username=admin password="$PASS"
+              fi
+              if ! vault kv get -format=json secret/drools/kie-user >/dev/null 2>&1; then
+                PASS="$(gen_pass)"
+                vault kv put secret/drools/kie-user username=kieserver password="$PASS"
+              fi
+
+              until getent hosts "$PGHOST" >/dev/null 2>&1; do echo "🔄 Waiting for DNS for $PGHOST..."; sleep 3; done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
+              echo "✅ Yugabyte reachable"
+
+              echo "🔐 Waiting for secret/${VAULTADMIN_USER}..."
+              VAULTADMIN_PASS=""
+              while :; do
+                OUT="$(vault kv get -format=json "secret/${VAULTADMIN_USER}" 2>/dev/null || true)"
+                if [ -n "${OUT}" ]; then
+                  VAULTADMIN_PASS="$(printf '%s' "$OUT" | jq -r '.data.data.password // .data.data.value // empty')"
+                  [ -n "${VAULTADMIN_PASS}" ] && [ "${VAULTADMIN_PASS}" != "null" ] && break
+                fi
+                sleep 5
+              done
+              export PGPASSWORD="$VAULTADMIN_PASS"
+              wait_for_admin_conn
+
+              while :; do
+                DB_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)"
+                [ "$DB_EXISTS" = "1" ] && { echo "✅ DB '$DB' exists"; break; }
+                echo "📦 Creating DB '$DB'..."
+                createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null && { echo "✅ DB created"; break; }
+                sleep 3
+              done
+
+              # Create roles with retries to avoid Yugabyte DDL restart errors
+              GROUP_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_roles WHERE rolname='${ROLE_GROUP}'" 2>/dev/null | tr -d '[:space:]' || true)"
+              if [ "$GROUP_EXISTS" != "1" ]; then
+                run_psql_ddl yugabyte "CREATE ROLE ${ROLE_GROUP} NOLOGIN;"
+              fi
+
+              OWNER_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_roles WHERE rolname='${ROLE_OWNER}'" 2>/dev/null | tr -d '[:space:]' || true)"
+              if [ "$OWNER_EXISTS" != "1" ]; then
+                run_psql_ddl yugabyte "CREATE ROLE ${ROLE_OWNER} LOGIN INHERIT;"
+              fi
+
+              run_psql_ddl yugabyte "GRANT ${ROLE_GROUP} TO ${ROLE_OWNER};"
+              run_psql_ddl yugabyte "GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};"
+
+              # Create schemas and privileges with retries
+              run_psql_ddl "$DB" "CREATE SCHEMA IF NOT EXISTS drools AUTHORIZATION ${ROLE_OWNER};"
+              run_psql_ddl "$DB" "CREATE SCHEMA IF NOT EXISTS kie_server AUTHORIZATION ${ROLE_OWNER};"
+              run_psql_ddl "$DB" "CREATE SCHEMA IF NOT EXISTS kogito AUTHORIZATION ${ROLE_OWNER};"
+              run_psql_ddl "$DB" "CREATE SCHEMA IF NOT EXISTS data_index AUTHORIZATION ${ROLE_OWNER};"
+              run_psql_ddl "$DB" "ALTER ROLE ${ROLE_OWNER} SET search_path = drools,kie_server,kogito,data_index,public;"
+              run_psql_ddl "$DB" "GRANT CONNECT ON DATABASE ${DB} TO ${ROLE_OWNER};"
+
+              # Set permissions for each schema using retries (Yugabyte sometimes forces DDL restart)
+              for schema in drools kie_server kogito data_index; do
+                run_psql_ddl "$DB" "GRANT USAGE, CREATE ON SCHEMA ${schema} TO ${ROLE_GROUP};"
+                run_psql_ddl "$DB" "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${ROLE_GROUP};"
+                run_psql_ddl "$DB" "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO ${ROLE_GROUP};"
+                run_psql_ddl "$DB" "ALTER DEFAULT PRIVILEGES FOR ROLE ${ROLE_OWNER} IN SCHEMA ${schema} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${ROLE_GROUP};"
+                run_psql_ddl "$DB" "ALTER DEFAULT PRIVILEGES FOR ROLE ${ROLE_OWNER} IN SCHEMA ${schema} GRANT USAGE, SELECT ON SEQUENCES TO ${ROLE_GROUP};"
+              done
+
+              if ! vault secrets list -format=json | jq -e 'has("yugabyte-db/")' >/dev/null 2>&1; then
+                vault secrets enable -path=yugabyte-db database
+                echo "✅ Enabled database secrets engine"
+              fi
+
+              vault write yugabyte-db/static-roles/drools-app \
+                db_name="yugabyte" \
+                username="${ROLE_OWNER}" \
+                rotation_statements="ALTER ROLE \"{{name}}\" WITH PASSWORD '{{password}}';" \
+                rotation_period="24h"
+
+              vault policy write "drools" - <<'EOF'
+              path "yugabyte-db/static-creds/drools-app"           { capabilities = ["read"] }
+              path "secret/data/drools/admin"                      { capabilities = ["read"] }
+              path "secret/data/drools/kie-user"                   { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-drools-workbench" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-secret-drools-workbench" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-drools-kie-server" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-secret-drools-kie-server" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-drools-kie-server-service" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-secret-drools-kie-server-service" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-kogito-console"     { capabilities = ["read"] }
+              path "secret/data/keycloak-client-secret-kogito-console" { capabilities = ["read"] }
+              path "secret/data/k8s-rules-engine-github-packages-username" { capabilities = ["read"] }
+              path "secret/data/k8s-rules-engine-github-packages-token" { capabilities = ["read"] }
+              path "secret/data/vaultadmin"                        { capabilities = ["read"] }
+              EOF
+
+              vault policy write "keycloak-admin-job" - <<'EOF'
+              path "secret/data/keycloak/admin"                      { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-drools-workbench"  { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-drools-kie-server" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-secret-drools-kie-server" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-drools-kie-server-service" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-secret-drools-kie-server-service" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-kogito-console"    { capabilities = ["read"] }
+              path "secret/data/drools/admin"                        { capabilities = ["read"] }
+              path "secret/data/drools/kie-user"                     { capabilities = ["read"] }
+              EOF
+
+              vault write auth/kubernetes/role/drools \
+                bound_service_account_names="drools-workbench,drools-kie-server,drools-kogito-decisions,drools-kogito-jobs,drools-kogito-data-index,drools-kogito-console,drools-rules-service,drools-api-gateway" \
+                bound_service_account_namespaces="drools" \
+                policies="drools" \
+                ttl="48h"
+
+              vault write auth/kubernetes/role/keycloak-admin-job \
+                bound_service_account_names="keycloak-admin-job" \
+                bound_service_account_namespaces="drools" \
+                policies="keycloak-admin-job" \
+                ttl="1h"
+
+              CREDS_JSON="$(vault read -format=json yugabyte-db/static-creds/drools-app)"
+              DB_USER="$(printf '%s' "$CREDS_JSON" | jq -r .data.username)"
+              DB_PASS="$(printf '%s' "$CREDS_JSON" | jq -r .data.password)"
+              export PGPASSWORD="$DB_PASS"
+              echo "🔎 Sanity check as $DB_USER"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB" -c "SELECT current_user, current_schema();"
+          volumeMounts:
+            - name: root-token
+              mountPath: /vault-token
+              readOnly: true
+
+---
+# RBAC for initialization jobs
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: job-status-reader-drools
+  namespace: vault
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: job-status-reader-for-drools
+  namespace: vault
+subjects:
+  - kind: ServiceAccount
+    name: drools-workbench
+    namespace: drools
+  - kind: ServiceAccount
+    name: drools-kie-server
+    namespace: drools
+  - kind: ServiceAccount
+    name: drools-kogito-decisions
+    namespace: drools
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: job-status-reader-drools
+---
+# RBAC for jobs service init container to read pod status
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader-drools
+  namespace: drools
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-reader-for-jobs-service
+  namespace: drools
+subjects:
+  - kind: ServiceAccount
+    name: drools-kogito-jobs
+    namespace: drools
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pod-reader-drools
+---
+# RBAC for ArgoCD PostSync hook (rollout + import)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: drools-workbench-rollout
+  namespace: drools
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["kie-workbench", "kie-server", "kogito-decision-service"]
+    verbs: ["get", "watch", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: drools-workbench-rollout
+  namespace: drools
+subjects:
+  - kind: ServiceAccount
+    name: drools-workbench
+    namespace: drools
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: drools-workbench-rollout
+---
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: drools
+  labels:
+    name: drools-rules-engine
+  annotations:
+    linkerd.io/inject: enabled
+    field.cattle.io/projectId: local:applications
+---
+# Service Accounts
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-workbench
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-kie-server
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-kogito-decisions
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-kogito-jobs
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-kogito-data-index
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-kogito-console
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-rules-service
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: drools-api-gateway
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kie-server-openapi
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kogito-decision-openapi
+  namespace: drools
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: keycloak-admin-job
+  namespace: drools
+

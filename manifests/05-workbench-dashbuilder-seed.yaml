@@ -34,23 +34,39 @@ spec:
             - |
               set -euo pipefail
               REPO_DIR="/niogit/.niogit/dashbuilder/datasets.git"
+              DEFAULT_BRANCH="master"
               if [ ! -d "$REPO_DIR" ]; then
                 echo "Creating datasets repo at $REPO_DIR"
                 mkdir -p "$REPO_DIR"
-                git init --bare "$REPO_DIR"
-              fi
-
-              if [ -f "$REPO_DIR/refs/heads/master" ]; then
-                echo "dashbuilder datasets repo already initialized; skipping"
-                exit 0
+                git -c init.defaultBranch="$DEFAULT_BRANCH" init --bare "$REPO_DIR"
               fi
 
               tmp="$(mktemp -d)"
               trap 'rm -rf "$tmp"' EXIT
-              git init "$tmp"
-              cd "$tmp"
+              WORKDIR="$tmp/repo"
+
+              if git --git-dir="$REPO_DIR" show-ref --quiet refs/heads/main; then
+                DEFAULT_BRANCH="main"
+              elif git --git-dir="$REPO_DIR" show-ref --quiet refs/heads/master; then
+                DEFAULT_BRANCH="master"
+              fi
+
+              if git --git-dir="$REPO_DIR" show-ref --quiet; then
+                git clone "$REPO_DIR" "$WORKDIR"
+              else
+                git -c init.defaultBranch="$DEFAULT_BRANCH" init "$WORKDIR"
+                git -C "$WORKDIR" remote add origin "$REPO_DIR"
+              fi
+
+              cd "$WORKDIR"
               git config user.email "dashbuilder@local"
               git config user.name "dashbuilder"
+              if git show-ref --quiet "refs/heads/$DEFAULT_BRANCH"; then
+                git checkout "$DEFAULT_BRANCH"
+              else
+                git checkout -b "$DEFAULT_BRANCH"
+              fi
+              git pull --rebase origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
               mkdir -p definitions
               cat > definitions/gitContributors.dset <<'EOF'
               {
@@ -66,10 +82,12 @@ spec:
               }
               EOF
               git add definitions/gitContributors.dset
+              if git diff --cached --quiet; then
+                echo "dashbuilder datasets already up to date"
+                exit 0
+              fi
               git commit -m "Seed dashbuilder datasets"
-              git branch -M master
-              git remote add origin "$REPO_DIR"
-              git push -u origin master
+              git push origin "HEAD:$DEFAULT_BRANCH"
               echo "dashbuilder datasets repo seeded"
           volumeMounts:
             - { name: workbench-niogit, mountPath: /niogit }

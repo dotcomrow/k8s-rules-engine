@@ -49,83 +49,69 @@ spec:
       containers:
         - name: setup-role
           image: hashicorp/vault:1.15.4
+          env:
+            - name: RESET_SCHEMAS
+              value: "false"
+            - name: YSQL_SU_KV_PATH
+              value: "secret/yugabyte-su"
+            - name: DDL_RETRY_ATTEMPTS
+              value: "5"
+            - name: DDL_RETRY_SLEEP
+              value: "3"
           command: ["/bin/sh","-c"]
           args:
             - |
               set -euo pipefail
+              PGHOST="yb-tserver-service.yugabyte.svc.cluster.local"
+              PGPORT="5433"
+              ADMIN_DB="yugabyte"
+              APP_DB="drools"
+              VAULTADMIN_USER="vaultadmin"
+              VAULTADMIN_KV_PATH="secret/vaultadmin"
+              USER_ADMIN="drools_admin"
+              USER_RO="drools_ro"
+              SCHEMAS="drools kie_server kogito data_index"
+              VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+              AUTH_PATH="kubernetes"
+              DB_MOUNT="yugabyte-db"
+              DB_NAME_IN_VAULT="yugabyte"
+              ROLE_STATIC_ADMIN="drools-yb-admin"
+              ROLE_STATIC_RO="drools-yb-ro"
+              DDL_RETRY_ATTEMPTS="${DDL_RETRY_ATTEMPTS:-5}"
+              DDL_RETRY_SLEEP="${DDL_RETRY_SLEEP:-3}"
 
-              PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
-              PGPORT=5433
-              DB=drools
-              ROLE_GROUP=drools
-              ROLE_OWNER=drools_app
-              VAULTADMIN_USER=vaultadmin
-              PGCONNECT_TIMEOUT=5
-              PGAPPNAME="drools-yugabyte-config"
-              export PGCONNECT_TIMEOUT PGAPPNAME
-
-              run_psql_ddl() {
-                local db="$1"
-                local sql="$2"
-                local user="${3:-$VAULTADMIN_USER}"
-                local attempt=1
-                local max=5
-                local output status
-
-                while :; do
-                  if output="$(psql -h "$PGHOST" -p "$PGPORT" -U "$user" -d "$db" -v ON_ERROR_STOP=1 -c "$sql" 2>&1)"; then
-                    printf '%s\n' "$output"
+              run_psql_with_retry() {
+                desc="$1"; shift
+                attempt=1
+                while [ "$attempt" -le "$DDL_RETRY_ATTEMPTS" ]; do
+                  set +e
+                  output="$("$@" 2>&1)"
+                  status=$?
+                  set -e
+                  if [ "$status" -eq 0 ]; then
+                    [ -n "$output" ] && printf "%s\n" "$output"
                     return 0
                   fi
-                  status=$?
-                  printf '%s\n' "$output"
-                  if printf '%s\n' "$output" | grep -q "Restarting a DDL transaction not supported"; then
-                    if [ $attempt -ge $max ]; then
-                      echo "❌ DDL failed after $max attempts"
-                      return $status
-                    fi
-                    attempt=$((attempt+1))
-                    echo "⚠️  Yugabyte DDL restart, retrying in 2s ($attempt/$max)..."
-                    sleep 2
+                  printf "%s\n" "$output" >&2
+                  if printf '%s' "$output" | grep -q "Restarting a DDL transaction not supported" && [ "$attempt" -lt "$DDL_RETRY_ATTEMPTS" ]; then
+                    echo "🔁 ${desc} hit Yugabyte DDL restart; retrying in ${DDL_RETRY_SLEEP}s (attempt ${attempt}/${DDL_RETRY_ATTEMPTS})"
+                    sleep "$DDL_RETRY_SLEEP"
+                    attempt=$((attempt + 1))
                     continue
                   fi
-                  return $status
+                  echo "❌ ${desc} failed after ${attempt} attempt(s)"
+                  return "$status"
                 done
               }
 
-              wait_for_admin_conn() {
-                local attempt=1
-                local max=40
-                local out
-                while :; do
-                  if out="$(PGPASSWORD="$VAULTADMIN_PASS" psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT version();" 2>&1)"; then
-                    echo "✅ Preflight (admin) connected to yugabyte: ${out:-ok}"
-                    return 0
-                  fi
-                  if [ $attempt -ge $max ]; then
-                    echo "❌ Preflight (admin) failed after $max attempts:"
-                    printf '%s\n' "$out"
-                    exit 1
-                  fi
-                  echo "⏳ Waiting for admin DB connection ($attempt/$max)..."
-                  attempt=$((attempt+1))
-                  sleep 3
-                done
-              }
-
-              apk add --no-cache postgresql15-client jq netcat-openbsd curl
-
+              apk add --no-cache postgresql15-client jq netcat-openbsd curl >/dev/null || true
               export PATH="$PATH:/vault-bin"
-              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+              export VAULT_ADDR
 
-              while [ ! -f /vault-token/VAULT_TOKEN ]; do
-                echo "🔁 Waiting for Vault token file..."
-                sleep 2
-              done
+              until [ -s /vault-token/VAULT_TOKEN ]; do echo "🔁 waiting for /vault-token/VAULT_TOKEN..."; sleep 2; done
               export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
 
               gen_pass() {
-                # Vault CLI treats leading @ as "read from file", so avoid passwords beginning with @
                 while :; do
                   P="$(tr -dc 'A-Za-z0-9@#%^+=_' </dev/urandom | head -c 32)"
                   case "$P" in @*) continue ;; esac
@@ -157,77 +143,187 @@ spec:
                 vault kv put secret/drools/kie-user username=kieserver password="$PASS"
               fi
 
-              until getent hosts "$PGHOST" >/dev/null 2>&1; do echo "🔄 Waiting for DNS for $PGHOST..."; sleep 3; done
-              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
+              until getent hosts "$PGHOST" >/dev/null 2>&1; do echo "🔄 waiting for DNS $PGHOST..."; sleep 3; done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
               echo "✅ Yugabyte reachable"
 
-              echo "🔐 Waiting for secret/${VAULTADMIN_USER}..."
-              VAULTADMIN_PASS=""
-              while :; do
-                OUT="$(vault kv get -format=json "secret/${VAULTADMIN_USER}" 2>/dev/null || true)"
-                if [ -n "${OUT}" ]; then
-                  VAULTADMIN_PASS="$(printf '%s' "$OUT" | jq -r '.data.data.password // .data.data.value // empty')"
-                  [ -n "${VAULTADMIN_PASS}" ] && [ "${VAULTADMIN_PASS}" != "null" ] && break
+              while true; do
+                echo "🔐 Fetching ${VAULTADMIN_KV_PATH}..."
+                if VAULTADMIN_JSON="$(vault kv get -format=json "${VAULTADMIN_KV_PATH}" 2>/dev/null)"; then
+                  VAULTADMIN_PASS="$(printf '%s' "${VAULTADMIN_JSON}" | jq -r '.data.data.password // .data.data.value // empty')"
+                  if [ -n "${VAULTADMIN_PASS}" ]; then
+                    break
+                  fi
                 fi
+                echo "⏳ ${VAULTADMIN_KV_PATH} not ready; retrying in 5s"
                 sleep 5
               done
+
               export PGPASSWORD="$VAULTADMIN_PASS"
-              wait_for_admin_conn
 
-              while :; do
-                DB_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)"
-                [ "$DB_EXISTS" = "1" ] && { echo "✅ DB '$DB' exists"; break; }
-                echo "📦 Creating DB '$DB'..."
-                createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null && { echo "✅ DB created"; break; }
-                sleep 3
+              while true; do
+                ROLE_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$ADMIN_DB" -Atc "SELECT 1 FROM pg_roles WHERE rolname='${VAULTADMIN_USER}'" 2>/dev/null || true)"
+                if [ "${ROLE_EXISTS}" = "1" ]; then
+                  echo "✅ Role ${VAULTADMIN_USER} exists; continuing"
+                  break
+                fi
+                echo "⏳ Waiting for role ${VAULTADMIN_USER} to exist before continuing..."
+                sleep 5
               done
 
-              # Create roles with retries to avoid Yugabyte DDL restart errors
-              GROUP_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_roles WHERE rolname='${ROLE_GROUP}'" 2>/dev/null | tr -d '[:space:]' || true)"
-              if [ "$GROUP_EXISTS" != "1" ]; then
-                run_psql_ddl yugabyte "CREATE ROLE ${ROLE_GROUP} NOLOGIN;"
+              DB_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$ADMIN_DB" -Atc "SELECT 1 FROM pg_database WHERE datname='${APP_DB}'" || true)"
+              if [ "${DB_EXISTS}" != "1" ]; then
+                echo "📦 Creating DB '${APP_DB}' owned by ${VAULTADMIN_USER}…"
+                run_psql_with_retry "create database ${APP_DB}" \
+                  createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$APP_DB"
+              else
+                echo "✅ DB '${APP_DB}' exists"
               fi
 
-              OWNER_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_roles WHERE rolname='${ROLE_OWNER}'" 2>/dev/null | tr -d '[:space:]' || true)"
-              if [ "$OWNER_EXISTS" != "1" ]; then
-                run_psql_ddl yugabyte "CREATE ROLE ${ROLE_OWNER} LOGIN INHERIT;"
+              if [ "${RESET_SCHEMAS}" = "true" ]; then
+                echo "⚠️  RESET_SCHEMAS=true -> dropping schemas ${SCHEMAS}"
+                for schema in $SCHEMAS; do
+                  run_psql_with_retry "drop schema ${schema}" \
+                    psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=0 -c "DROP SCHEMA IF EXISTS ${schema} CASCADE;"
+                done
               fi
 
-              run_psql_ddl yugabyte "GRANT ${ROLE_GROUP} TO ${ROLE_OWNER};"
-              run_psql_ddl yugabyte "GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};"
+              ADMIN_ROLE_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -Atc "SELECT 1 FROM pg_roles WHERE rolname='${USER_ADMIN}'" || true)"
+              if [ "${ADMIN_ROLE_EXISTS:-}" != "1" ]; then
+                echo "➕ Creating role ${USER_ADMIN}"
+                run_psql_with_retry "create role ${USER_ADMIN}" \
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                    -c "CREATE ROLE ${USER_ADMIN} LOGIN PASSWORD 'temp-initial';"
+              else
+                echo "✅ Role ${USER_ADMIN} exists"
+              fi
 
-              # Create schemas and privileges with retries
-              run_psql_ddl "$DB" "CREATE SCHEMA IF NOT EXISTS drools AUTHORIZATION ${ROLE_OWNER};"
-              run_psql_ddl "$DB" "CREATE SCHEMA IF NOT EXISTS kie_server AUTHORIZATION ${ROLE_OWNER};"
-              run_psql_ddl "$DB" "CREATE SCHEMA IF NOT EXISTS kogito AUTHORIZATION ${ROLE_OWNER};"
-              run_psql_ddl "$DB" "CREATE SCHEMA IF NOT EXISTS data_index AUTHORIZATION ${ROLE_OWNER};"
-              run_psql_ddl "$DB" "ALTER ROLE ${ROLE_OWNER} SET search_path = drools,kie_server,kogito,data_index,public;"
-              run_psql_ddl "$DB" "GRANT CONNECT ON DATABASE ${DB} TO ${ROLE_OWNER};"
+              RO_ROLE_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -Atc "SELECT 1 FROM pg_roles WHERE rolname='${USER_RO}'" || true)"
+              if [ "${RO_ROLE_EXISTS:-}" != "1" ]; then
+                echo "➕ Creating role ${USER_RO}"
+                run_psql_with_retry "create role ${USER_RO}" \
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                    -c "CREATE ROLE ${USER_RO} LOGIN PASSWORD 'temp-initial';"
+              else
+                echo "✅ Role ${USER_RO} exists"
+              fi
 
-              # Set permissions for each schema using retries (Yugabyte sometimes forces DDL restart)
-              for schema in drools kie_server kogito data_index; do
-                run_psql_ddl "$DB" "GRANT USAGE, CREATE ON SCHEMA ${schema} TO ${ROLE_GROUP};"
-                run_psql_ddl "$DB" "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${ROLE_GROUP};"
-                run_psql_ddl "$DB" "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO ${ROLE_GROUP};"
-                run_psql_ddl "$DB" "ALTER DEFAULT PRIVILEGES FOR ROLE ${ROLE_OWNER} IN SCHEMA ${schema} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${ROLE_GROUP};"
-                run_psql_ddl "$DB" "ALTER DEFAULT PRIVILEGES FOR ROLE ${ROLE_OWNER} IN SCHEMA ${schema} GRANT USAGE, SELECT ON SEQUENCES TO ${ROLE_GROUP};"
+              run_psql_with_retry "grant ${USER_ADMIN} to ${VAULTADMIN_USER}" \
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                  -c "GRANT ${USER_ADMIN} TO ${VAULTADMIN_USER} WITH ADMIN OPTION;"
+              run_psql_with_retry "grant ${USER_RO} to ${VAULTADMIN_USER}" \
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                  -c "GRANT ${USER_RO} TO ${VAULTADMIN_USER} WITH ADMIN OPTION;"
+
+              run_psql_with_retry "grant DB privileges" \
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                  -c "GRANT ALL PRIVILEGES ON DATABASE ${APP_DB} TO ${VAULTADMIN_USER}, ${USER_ADMIN}, ${USER_RO};"
+
+              for schema in $SCHEMAS; do
+                run_psql_with_retry "create schema ${schema}" \
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                    -c "CREATE SCHEMA IF NOT EXISTS ${schema} AUTHORIZATION ${VAULTADMIN_USER};"
+                run_psql_with_retry "grant schema ${schema}" \
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                    -c "GRANT USAGE, CREATE ON SCHEMA ${schema} TO ${VAULTADMIN_USER}, ${USER_ADMIN}, ${USER_RO};"
+                run_psql_with_retry "grant tables ${schema}" \
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=0 \
+                    -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA ${schema} TO ${VAULTADMIN_USER}, ${USER_ADMIN}, ${USER_RO};" || true
+                run_psql_with_retry "grant sequences ${schema}" \
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=0 \
+                    -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ${schema} TO ${VAULTADMIN_USER}, ${USER_ADMIN}, ${USER_RO};" || true
+
+                run_psql_with_retry "default privs admin ${schema}" \
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                    -c "ALTER DEFAULT PRIVILEGES FOR ROLE ${VAULTADMIN_USER} IN SCHEMA ${schema} GRANT ALL PRIVILEGES ON TABLES TO ${VAULTADMIN_USER}, ${USER_ADMIN}, ${USER_RO};"
+                run_psql_with_retry "default privs admin seq ${schema}" \
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                    -c "ALTER DEFAULT PRIVILEGES FOR ROLE ${VAULTADMIN_USER} IN SCHEMA ${schema} GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO ${VAULTADMIN_USER}, ${USER_ADMIN}, ${USER_RO};"
+
+                run_psql_with_retry "default privs ${USER_ADMIN} ${schema}" \
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                    -c "ALTER DEFAULT PRIVILEGES FOR ROLE ${USER_ADMIN} IN SCHEMA ${schema} GRANT ALL PRIVILEGES ON TABLES TO ${VAULTADMIN_USER}, ${USER_ADMIN}, ${USER_RO};"
+                run_psql_with_retry "default privs ${USER_ADMIN} seq ${schema}" \
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                    -c "ALTER DEFAULT PRIVILEGES FOR ROLE ${USER_ADMIN} IN SCHEMA ${schema} GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO ${VAULTADMIN_USER}, ${USER_ADMIN}, ${USER_RO};"
+
+                run_psql_with_retry "default privs ${USER_RO} ${schema}" \
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                    -c "ALTER DEFAULT PRIVILEGES FOR ROLE ${USER_RO} IN SCHEMA ${schema} GRANT ALL PRIVILEGES ON TABLES TO ${VAULTADMIN_USER}, ${USER_ADMIN}, ${USER_RO};"
+                run_psql_with_retry "default privs ${USER_RO} seq ${schema}" \
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                    -c "ALTER DEFAULT PRIVILEGES FOR ROLE ${USER_RO} IN SCHEMA ${schema} GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO ${VAULTADMIN_USER}, ${USER_ADMIN}, ${USER_RO};"
               done
 
-              if ! vault secrets list -format=json | jq -e 'has("yugabyte-db/")' >/dev/null 2>&1; then
-                vault secrets enable -path=yugabyte-db database
-                echo "✅ Enabled database secrets engine"
+              run_psql_with_retry "set search_path ${USER_ADMIN}" \
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                  -c "ALTER ROLE ${USER_ADMIN} SET search_path = drools,kie_server,kogito,data_index,public;"
+              run_psql_with_retry "set search_path ${USER_RO}" \
+                psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
+                  -c "ALTER ROLE ${USER_RO} SET search_path = drools,kie_server,kogito,data_index,public;"
+
+              if vault kv get -format=json "${YSQL_SU_KV_PATH}" >/dev/null 2>&1; then
+                echo "🔧 Superuser takeover enabled via ${YSQL_SU_KV_PATH}"
+                SU_USER="$(vault kv get -format=json "${YSQL_SU_KV_PATH}" | jq -r '.data.data.username // "yugabyte"')"
+                SU_PASS="$(vault kv get -format=json "${YSQL_SU_KV_PATH}" | jq -r '.data.data.password')"
+                export PGPASSWORD="$SU_PASS"
+                SCHEMA_IN="'drools','kie_server','kogito','data_index'"
+
+                TABLE_OWNER_SQL="$(psql -h "$PGHOST" -p "$PGPORT" -U "$SU_USER" -d "$APP_DB" -Atc \
+                  "SELECT 'ALTER TABLE '||quote_ident(schemaname)||'.'||quote_ident(tablename)||' OWNER TO ${USER_ADMIN};'
+                     FROM pg_catalog.pg_tables
+                    WHERE schemaname IN (${SCHEMA_IN});")"
+                if [ -n "${TABLE_OWNER_SQL}" ]; then
+                  printf "%s\n" "${TABLE_OWNER_SQL}" > /tmp/drools_table_owner.sql
+                  run_psql_with_retry "reassign table ownership" \
+                    psql -h "$PGHOST" -p "$PGPORT" -U "$SU_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 -f /tmp/drools_table_owner.sql
+                fi
+
+                SEQ_OWNER_SQL="$(psql -h "$PGHOST" -p "$PGPORT" -U "$SU_USER" -d "$APP_DB" -Atc \
+                  "SELECT 'ALTER SEQUENCE '||quote_ident(sequence_schema)||'.'||quote_ident(sequence_name)||' OWNER TO ${USER_ADMIN};'
+                     FROM information_schema.sequences
+                    WHERE sequence_schema IN (${SCHEMA_IN});")"
+                if [ -n "${SEQ_OWNER_SQL}" ]; then
+                  printf "%s\n" "${SEQ_OWNER_SQL}" > /tmp/drools_seq_owner.sql
+                  run_psql_with_retry "reassign sequence ownership" \
+                    psql -h "$PGHOST" -p "$PGPORT" -U "$SU_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 -f /tmp/drools_seq_owner.sql
+                fi
+
+                echo "✅ Ownership set to ${USER_ADMIN}"
+                export PGPASSWORD="$VAULTADMIN_PASS"
+              else
+                echo "ℹ️ Superuser KV not found; skipping ownership takeover."
               fi
 
-              vault write yugabyte-db/static-roles/drools-app \
-                db_name="yugabyte" \
-                username="${ROLE_OWNER}" \
-                rotation_statements="ALTER ROLE \"{{name}}\" WITH PASSWORD '{{password}}';" \
-                rotation_period="24h"
+              if ! vault secrets list -format=json | jq -e 'has("'"${DB_MOUNT}"'/")' >/dev/null 2>&1; then
+                vault secrets enable -path="${DB_MOUNT}" database
+              fi
+
+              vault write "${DB_MOUNT}/static-roles/${ROLE_STATIC_ADMIN}" \
+                db_name="${DB_NAME_IN_VAULT}" \
+                username="${USER_ADMIN}" \
+                rotation_period="24h" \
+                rotation_statements="ALTER ROLE \"${USER_ADMIN}\" WITH PASSWORD '{{password}}';"
+
+              vault write "${DB_MOUNT}/static-roles/${ROLE_STATIC_RO}" \
+                db_name="${DB_NAME_IN_VAULT}" \
+                username="${USER_RO}" \
+                rotation_period="24h" \
+                rotation_statements="ALTER ROLE \"${USER_RO}\" WITH PASSWORD '{{password}}';"
+
+              vault write -f "${DB_MOUNT}/rotate-role/${ROLE_STATIC_ADMIN}" >/dev/null
+              vault write -f "${DB_MOUNT}/rotate-role/${ROLE_STATIC_RO}" >/dev/null
+
+              vault policy write "${ROLE_STATIC_ADMIN}" - <<EOF
+              path "${DB_MOUNT}/static-creds/${ROLE_STATIC_ADMIN}" { capabilities = ["read"] }
+              EOF
+              vault policy write "${ROLE_STATIC_RO}" - <<EOF
+              path "${DB_MOUNT}/static-creds/${ROLE_STATIC_RO}" { capabilities = ["read"] }
+              EOF
 
               vault policy write "drools" - <<'EOF'
-              path "yugabyte-db/static-creds/drools-app"           { capabilities = ["read"] }
-              path "secret/data/drools/admin"                      { capabilities = ["read"] }
-              path "secret/data/drools/kie-user"                   { capabilities = ["read"] }
+              path "secret/data/drools/admin"                        { capabilities = ["read"] }
+              path "secret/data/drools/kie-user"                     { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-drools-workbench" { capabilities = ["read"] }
               path "secret/data/keycloak-client-secret-drools-workbench" { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-drools-kie-server" { capabilities = ["read"] }
@@ -238,7 +334,7 @@ spec:
               path "secret/data/keycloak-client-secret-kogito-console" { capabilities = ["read"] }
               path "secret/data/k8s-rules-engine-github-packages-username" { capabilities = ["read"] }
               path "secret/data/k8s-rules-engine-github-packages-token" { capabilities = ["read"] }
-              path "secret/data/vaultadmin"                        { capabilities = ["read"] }
+              path "secret/data/vaultadmin"                          { capabilities = ["read"] }
               EOF
 
               vault policy write "keycloak-admin-job" - <<'EOF'
@@ -253,24 +349,24 @@ spec:
               path "secret/data/drools/kie-user"                     { capabilities = ["read"] }
               EOF
 
-              vault write auth/kubernetes/role/drools \
+              vault write auth/${AUTH_PATH}/role/drools \
                 bound_service_account_names="drools-workbench,drools-kie-server,drools-kogito-decisions,drools-kogito-jobs,drools-kogito-data-index,drools-kogito-console,drools-rules-service,drools-api-gateway" \
                 bound_service_account_namespaces="drools" \
-                policies="drools" \
+                policies="drools,${ROLE_STATIC_ADMIN}" \
                 ttl="48h"
 
-              vault write auth/kubernetes/role/keycloak-admin-job \
+              vault write auth/${AUTH_PATH}/role/keycloak-admin-job \
                 bound_service_account_names="keycloak-admin-job" \
                 bound_service_account_namespaces="drools" \
                 policies="keycloak-admin-job" \
                 ttl="1h"
 
-              CREDS_JSON="$(vault read -format=json yugabyte-db/static-creds/drools-app)"
+              CREDS_JSON="$(vault read -format=json ${DB_MOUNT}/static-creds/${ROLE_STATIC_ADMIN})"
               DB_USER="$(printf '%s' "$CREDS_JSON" | jq -r .data.username)"
               DB_PASS="$(printf '%s' "$CREDS_JSON" | jq -r .data.password)"
               export PGPASSWORD="$DB_PASS"
               echo "🔎 Sanity check as $DB_USER"
-              psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB" -c "SELECT current_user, current_schema();"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$APP_DB" -c "SELECT current_user, current_schema();"
           volumeMounts:
             - name: root-token
               mountPath: /vault-token
@@ -436,4 +532,3 @@ kind: ServiceAccount
 metadata:
   name: keycloak-admin-job
   namespace: drools
-

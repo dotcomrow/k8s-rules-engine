@@ -295,7 +295,7 @@ spec:
               export VAULT_TOKEN
               
               echo "🔑 Fetching database credentials from Vault..."
-              vault read -format=json yugabyte-db/static-creds/drools-app > /shared/db-creds.json
+              vault read -format=json yugabyte-db/static-creds/drools-yb-admin > /shared/db-creds.json
               
               # Extract credentials and create environment file
               DB_USERNAME=$(cat /shared/db-creds.json | jq -r '.data.username')
@@ -695,7 +695,7 @@ spec:
             - name: DROOLS_VERSION
               value: "7.74.1.Final"
             - name: KIE_CONNECTION_URL
-              value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/drools?currentSchema=drools"
+              value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/drools?currentSchema=drools&sslmode=disable"
             - name: KIE_CONNECTION_DRIVER_CLASS
               value: "org.postgresql.Driver"
             - name: PROXY_ADDRESS_FORWARDING

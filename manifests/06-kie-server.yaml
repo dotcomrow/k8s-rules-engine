@@ -211,6 +211,23 @@ spec:
               EOF
               echo "✅ GitHub Packages Maven settings created"
 
+              echo "🔑 Fetching database credentials from Vault..."
+              vault read -format=json yugabyte-db/static-creds/drools-yb-admin > /shared/db-creds.json
+              DB_USERNAME="$(jq -r '.data.username' /shared/db-creds.json)"
+              DB_PASSWORD="$(jq -r '.data.password' /shared/db-creds.json)"
+              if [ -z "${DB_USERNAME:-}" ] || [ -z "${DB_PASSWORD:-}" ]; then
+                echo "❌ Missing Yugabyte credentials in Vault"
+                exit 1
+              fi
+              DB_URL="jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/drools?currentSchema=kie_server&sslmode=disable"
+              DB_ENV_FILE="/shared/db-env.sh"
+              {
+                echo "export KIE_SERVER_DB_USERNAME=\"$DB_USERNAME\""
+                echo "export KIE_SERVER_DB_PASSWORD=\"$DB_PASSWORD\""
+                echo "export KIE_SERVER_DB_URL=\"$DB_URL\""
+              } > "$DB_ENV_FILE"
+              echo "✅ Database credentials retrieved: user=$DB_USERNAME"
+
               KIE_ENV_FILE="/shared/kie-users-env.sh"
               : > "$KIE_ENV_FILE"
               ADMIN_JSON="$(vault kv get -format=json secret/drools/admin 2>/dev/null || true)"
@@ -284,6 +301,66 @@ spec:
               echo "✅ Keycloak adapter modules installed"
           volumeMounts:
             - { name: wildfly-modules, mountPath: /target }
+        - name: install-postgresql-driver
+          image: alpine:3.20
+          command: ["/bin/sh","-c"]
+          env:
+            - name: POSTGRESQL_DRIVER_VERSION
+              value: "42.7.4"
+          args:
+            - |
+              set -euo pipefail
+              apk add --no-cache curl
+              DEST="/target/system/layers/base/org/postgresql/main"
+              mkdir -p "$DEST"
+              JAR="postgresql-${POSTGRESQL_DRIVER_VERSION}.jar"
+              URL="https://repo1.maven.org/maven2/org/postgresql/postgresql/${POSTGRESQL_DRIVER_VERSION}/${JAR}"
+              echo "⬇️  Downloading PostgreSQL JDBC driver..."
+              curl -fsSL "$URL" -o "$DEST/$JAR"
+              cat > "$DEST/module.xml" <<EOF
+              <module name="org.postgresql" xmlns="urn:jboss:module:1.3">
+                <resources>
+                  <resource-root path="${JAR}"/>
+                </resources>
+                <dependencies>
+                  <module name="javax.api"/>
+                  <module name="javax.transaction.api"/>
+                </dependencies>
+              </module>
+              EOF
+              echo "✅ PostgreSQL driver module installed"
+          volumeMounts:
+            - { name: wildfly-modules, mountPath: /target }
+        - name: configure-datasource
+          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+              if [ ! -f /vault-secrets/db-env.sh ]; then
+                echo "❌ DB credentials file not found at /vault-secrets/db-env.sh"
+                exit 1
+              fi
+              # shellcheck disable=SC1091
+              . /vault-secrets/db-env.sh
+              CLI="/tmp/configure-datasource.cli"
+              cat > "$CLI" <<EOF
+              embed-server --std-out=echo --server-config=standalone-full-kie-server.xml
+              batch
+              if (outcome != success) of /subsystem=datasources/jdbc-driver=postgresql:read-resource
+                /subsystem=datasources/jdbc-driver=postgresql:add(driver-name=postgresql, driver-module-name=org.postgresql, driver-class-name=org.postgresql.Driver)
+              end-if
+              if (outcome != success) of /subsystem=datasources/data-source=KieServerDS:read-resource
+                /subsystem=datasources/data-source=KieServerDS:add(jndi-name="java:jboss/datasources/KieServerDS", driver-name="postgresql", connection-url="${KIE_SERVER_DB_URL}", user-name="${KIE_SERVER_DB_USERNAME}", password="${KIE_SERVER_DB_PASSWORD}", min-pool-size=5, max-pool-size=20, enabled=true)
+              end-if
+              run-batch
+              stop-embedded-server
+              EOF
+              /opt/jboss/wildfly/bin/jboss-cli.sh --file="$CLI"
+          volumeMounts:
+            - { name: kieserver-config, mountPath: /opt/jboss/wildfly/standalone/configuration }
+            - { name: wildfly-modules, mountPath: /opt/jboss/wildfly/modules }
+            - { name: vault-secrets, mountPath: /vault-secrets }
         - name: configure-oidc
           image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
           command: ["/bin/sh","-c"]
@@ -347,7 +424,7 @@ spec:
           ports:
             - { containerPort: 8080 }
           env:
-            - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0 -Dorg.drools.server.filter.classes=true" }
+            - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0 -Dorg.drools.server.filter.classes=true -Dorg.kie.server.persistence.ds=java:jboss/datasources/KieServerDS -Dorg.kie.server.persistence.dialect=org.hibernate.dialect.PostgreSQLDialect" }
             - { name: KIE_SERVER_ID,       value: "kie-server" }
             - { name: KIE_SERVER_LOCATION, value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server" }
             - { name: KIE_SERVER_CONTROLLER, value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller" }

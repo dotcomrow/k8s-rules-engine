@@ -436,20 +436,3 @@ spec:
     app:
       type: BACKEND_TO_BACKEND
       clientId: rules-engine-internal
-
----
-apiVersion: gravitee.io/v1alpha1
-kind: Subscription
-metadata:
-  name: kie-server-jwt-internal
-  namespace: drools
-spec:
-  api:
-    kind: ApiV4Definition
-    name: kie-server
-    namespace: drools
-  application:
-    kind: Application
-    name: rules-engine-internal
-    namespace: drools
-  plan: bearer-internal

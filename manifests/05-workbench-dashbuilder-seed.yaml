@@ -1,0 +1,72 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: workbench-dashbuilder-datasets-seed
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels: { app: workbench-dashbuilder-datasets-seed }
+      annotations:
+        linkerd.io/inject: disabled
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: seed-datasets
+          image: alpine/git:2.47.2
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+              REPO_DIR="/niogit/.niogit/dashbuilder/datasets.git"
+              if [ ! -d "$REPO_DIR" ]; then
+                echo "Creating datasets repo at $REPO_DIR"
+                mkdir -p "$REPO_DIR"
+                git init --bare "$REPO_DIR"
+              fi
+
+              if [ -f "$REPO_DIR/refs/heads/master" ]; then
+                echo "dashbuilder datasets repo already initialized; skipping"
+                exit 0
+              fi
+
+              tmp="$(mktemp -d)"
+              trap 'rm -rf "$tmp"' EXIT
+              git init "$tmp"
+              cd "$tmp"
+              git config user.email "dashbuilder@local"
+              git config user.name "dashbuilder"
+              mkdir -p definitions
+              cat > definitions/gitContributors.dset <<'EOF'
+              {
+                "uuid": "gitContributors",
+                "name": "Git Contributors",
+                "provider": "STATIC",
+                "isPublic": true,
+                "cacheEnabled": false,
+                "cacheMaxRows": 1000,
+                "pushEnabled": false,
+                "pushMaxSize": 1024,
+                "refreshAlways": false
+              }
+              EOF
+              git add definitions/gitContributors.dset
+              git commit -m "Seed dashbuilder datasets"
+              git branch -M master
+              git remote add origin "$REPO_DIR"
+              git push -u origin master
+              echo "dashbuilder datasets repo seeded"
+          volumeMounts:
+            - { name: workbench-niogit, mountPath: /niogit }
+      volumes:
+        - name: workbench-niogit
+          persistentVolumeClaim:
+            claimName: kie-workbench-niogit

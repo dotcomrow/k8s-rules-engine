@@ -37,6 +37,13 @@ spec:
           volumeMounts:
             - name: welcome-content
               mountPath: /shared
+        - name: configure-healthcheck
+          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
+          command: ["/bin/sh", "-c"]
+          args: ["/redirect/run-cli.sh"]
+          volumeMounts:
+            - { name: decision-config, mountPath: /config }
+            - { name: decision-redirect-cli, mountPath: /redirect }
       containers:
         - name: kogito-decision-service
           image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
@@ -46,6 +53,7 @@ spec:
           ports:
             - containerPort: 8080
           volumeMounts:
+            - { name: decision-config, mountPath: /opt/jboss/wildfly/standalone/configuration }
             - name: welcome-content
               mountPath: /opt/jboss/wildfly/welcome-content
               subPath: welcome-content
@@ -73,6 +81,14 @@ spec:
       volumes:
         - name: welcome-content
           emptyDir: {}
+        - name: decision-config
+          emptyDir: {}
+        - name: decision-redirect-cli
+          configMap:
+            name: decision-redirect-cli
+            items:
+              - { key: enable-redirect.cli, path: enable-redirect.cli, mode: 0444 }
+              - { key: run-cli.sh, path: run-cli.sh, mode: 0555 }
 
 ---
 apiVersion: v1
@@ -125,4 +141,3 @@ spec:
   ports:
     - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
   type: ClusterIP
-

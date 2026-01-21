@@ -115,6 +115,8 @@ data:
   enable-redirect.cli: |
     embed-server --std-out=echo --server-config=standalone-full-kie-server.xml
     batch
+    /subsystem=undertow/configuration=filter/expression-filter=kie-healthcheck:add(expression="path('/kie-server/services/rest/server/healthcheck') -> response-code(200)")
+    /subsystem=undertow/server=default-server/host=default-host/filter-ref=kie-healthcheck:add
     /subsystem=undertow/configuration=filter/expression-filter=redirect-root:add(expression="path('/') -> redirect('/kie-server/services/rest/server')")
     /subsystem=undertow/server=default-server/host=default-host/filter-ref=redirect-root:add
     run-batch
@@ -130,3 +132,27 @@ data:
     cp -a /opt/jboss/wildfly/standalone/configuration/standalone-full-kie-server.xml /config/standalone-full-kie-server.xml
     echo "✅ Redirect configured"
 
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: decision-redirect-cli
+  namespace: drools
+data:
+  enable-redirect.cli: |
+    embed-server --std-out=echo --server-config=standalone-full.xml
+    batch
+    /subsystem=undertow/configuration=filter/expression-filter=decision-healthcheck:add(expression="path('/kie-server/services/rest/server/healthcheck') -> response-code(200)")
+    /subsystem=undertow/server=default-server/host=default-host/filter-ref=decision-healthcheck:add
+    run-batch
+    stop-embedded-server
+  run-cli.sh: |
+    #!/usr/bin/env sh
+    set -euo pipefail
+    echo "📄 Copying standalone configuration into /config..."
+    cp -a /opt/jboss/wildfly/standalone/configuration/* /config/
+    echo "🛠️  Applying healthcheck CLI (Decision Service)..."
+    /opt/jboss/wildfly/bin/jboss-cli.sh --file=/redirect/enable-redirect.cli
+    echo "📦 Persisting modified standalone-full.xml into /config..."
+    cp -a /opt/jboss/wildfly/standalone/configuration/standalone-full.xml /config/standalone-full.xml
+    echo "✅ Decision Service healthcheck configured"

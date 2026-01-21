@@ -346,14 +346,12 @@ spec:
               CLI="/tmp/configure-datasource.cli"
               cat > "$CLI" <<EOF
               embed-server --std-out=echo --server-config=standalone-full-kie-server.xml
-              batch
               if (outcome != success) of /subsystem=datasources/jdbc-driver=postgresql:read-resource
                 /subsystem=datasources/jdbc-driver=postgresql:add(driver-name=postgresql, driver-module-name=org.postgresql, driver-class-name=org.postgresql.Driver)
               end-if
               if (outcome != success) of /subsystem=datasources/data-source=KieServerDS:read-resource
                 /subsystem=datasources/data-source=KieServerDS:add(jndi-name="java:jboss/datasources/KieServerDS", driver-name="postgresql", connection-url="${KIE_SERVER_DB_URL}", user-name="${KIE_SERVER_DB_USERNAME}", password="${KIE_SERVER_DB_PASSWORD}", min-pool-size=5, max-pool-size=20, enabled=true)
               end-if
-              run-batch
               stop-embedded-server
               EOF
               /opt/jboss/wildfly/bin/jboss-cli.sh --file="$CLI"

@@ -458,11 +458,15 @@ spec:
                   -s "bearerOnly=false" \
                   -s "clientAuthenticatorType=client-secret" >/dev/null 2>&1
                 tmp_secret="$(mktemp)"
-                printf '{"type":"secret","value":"%s"}' "$client_secret" > "$tmp_secret"
+                escaped_secret="$(printf '%s' "$client_secret" | sed -e 's/\\/\\\\/g' -e 's/\"/\\\"/g')"
+                printf '{"type":"secret","value":"%s"}' "$escaped_secret" > "$tmp_secret"
                 if ! $KCADM update "clients/$client_uuid/client-secret" -r "$REALM" -f "$tmp_secret" >/dev/null 2>&1; then
-                  rm -f "$tmp_secret"
-                  echo "❌ Failed to update client secret for $client_id"
-                  exit 1
+                  echo "⚠️  client-secret endpoint failed for $client_id, trying client update"
+                  if ! $KCADM update "clients/$client_uuid" -r "$REALM" -s "secret=$client_secret" >/dev/null 2>&1; then
+                    rm -f "$tmp_secret"
+                    echo "❌ Failed to update client secret for $client_id"
+                    exit 1
+                  fi
                 fi
                 rm -f "$tmp_secret"
                 current_secret="$($KCADM get "clients/$client_uuid/client-secret" -r "$REALM" --fields value --format csv | tr -d '\r\"' | tail -n1)"

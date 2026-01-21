@@ -384,6 +384,7 @@ spec:
                 echo "🔁 Updating client secret for $client_id"
                 $KCADM update "clients/$client_uuid" -r "$REALM" \
                   -s "publicClient=false" \
+                  -s "bearerOnly=false" \
                   -s "clientAuthenticatorType=client-secret" >/dev/null 2>&1 || true
                 $KCADM update "clients/$client_uuid/client-secret" -r "$REALM" \
                   -s "value=$client_secret" >/dev/null 2>&1 || true
@@ -698,4 +699,3 @@ spec:
               assign_client_roles_to_user "$CONTROLLER_USER" "$WORKBENCH_CLIENT_ID" "$CONTROLLER_ROLE_LIST"
           volumeMounts:
             - { name: keycloak-admin-env, mountPath: /shared }
-

@@ -2863,7 +2863,7 @@ spec:
           ports:
             - { containerPort: 8080 }
           env:
-            - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0" }
+            - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0 -Dorg.drools.server.filter.classes=true" }
             - { name: KIE_SERVER_ID,       value: "kie-server" }
             - { name: KIE_SERVER_LOCATION, value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server" }
             - { name: KIE_SERVER_CONTROLLER, value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller" }
@@ -3027,7 +3027,7 @@ spec:
               mountPath: /opt/jboss/wildfly/welcome-content
               subPath: welcome-content
           env:
-            - { name: JAVA_OPTS, value: "-Xms512m -Xmx2048m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8" }
+            - { name: JAVA_OPTS, value: "-Xms512m -Xmx2048m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8 -Dorg.drools.server.filter.classes=true" }
             - { name: KIE_SERVER_LOCATION, value: "http://kogito-decision-service.drools.svc.cluster.local:8080/kie-server/services/rest/server" }
             - { name: KIE_SERVER_USER, value: "kieserver" }
             - { name: KIE_SERVER_PWD,  value: "kieserver1!" }

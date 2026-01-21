@@ -563,6 +563,28 @@ spec:
               echo "jdt-core shaded jar staged for Workbench injection: ${JAR}"
           volumeMounts:
             - { name: workbench-extra-libs, mountPath: /target }
+        - name: install-eclipse-runtime-libs
+          image: alpine:3.20
+          command: ["/bin/sh","-c"]
+          env:
+            - name: ECLIPSE_RUNTIME_VERSION
+              value: "3.20.0"
+            - name: EQUINOX_COMMON_VERSION
+              value: "3.14.0"
+          args:
+            - |
+              set -euo pipefail
+              apk add --no-cache curl
+              RUNTIME_JAR="org.eclipse.core.runtime-${ECLIPSE_RUNTIME_VERSION}.jar"
+              RUNTIME_URL="https://repo1.maven.org/maven2/org/eclipse/platform/org.eclipse.core.runtime/${ECLIPSE_RUNTIME_VERSION}/${RUNTIME_JAR}"
+              COMMON_JAR="org.eclipse.equinox.common-${EQUINOX_COMMON_VERSION}.jar"
+              COMMON_URL="https://repo1.maven.org/maven2/org/eclipse/platform/org.eclipse.equinox.common/${EQUINOX_COMMON_VERSION}/${COMMON_JAR}"
+              echo "Downloading Eclipse runtime libs..."
+              curl -fsSL "$RUNTIME_URL" -o "/target/${RUNTIME_JAR}"
+              curl -fsSL "$COMMON_URL" -o "/target/${COMMON_JAR}"
+              echo "✅ Eclipse runtime libs staged for Workbench injection"
+          volumeMounts:
+            - { name: workbench-extra-libs, mountPath: /target }
         - name: configure-oidc
           image: quay.io/kiegroup/business-central-workbench-showcase:7.74.1.Final
           command: ["/bin/sh","-c"]
@@ -733,4 +755,3 @@ spec:
     - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
     - { name: git,  port: 9418, targetPort: 9418, protocol: TCP }
   type: ClusterIP
-

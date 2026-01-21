@@ -317,6 +317,61 @@ spec:
                 echo "✅ Added Keycloak mapper $CLIENT_ROLE_MAPPER_NAME for $client_id"
               }
 
+              ensure_audience_mapper() {
+                local client_id="$1"
+                local audience="$2"
+                local mapper_name="audience-${audience}"
+                local client_uuid=""
+                local existing=""
+
+                client_uuid="$(get_client_uuid "$client_id")"
+                if [ -z "$client_uuid" ] || [ "$client_uuid" = "id" ]; then
+                  echo "❌ Keycloak client not found: $client_id"
+                  exit 1
+                fi
+
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id,name" ] || [ "$line" = "\"id\",\"name\"" ]; then
+                    continue
+                  fi
+                  IFS=, read -r id name <<< "$line"
+                  id=${id#\"}
+                  id=${id%\"}
+                  name=${name#\"}
+                  name=${name%\"}
+                  if [ "$name" = "$mapper_name" ]; then
+                    existing="$id"
+                    break
+                  fi
+                done < <($KCADM get "clients/$client_uuid/protocol-mappers/models" -r "$REALM" \
+                  --fields id,name --format csv)
+
+                if [ -n "$existing" ] && [ "$existing" != "id" ]; then
+                  echo "🔁 Updating Keycloak mapper $mapper_name for $client_id"
+                  $KCADM update "clients/$client_uuid/protocol-mappers/models/$existing" -r "$REALM" \
+                    -s "name=$mapper_name" \
+                    -s "protocol=openid-connect" \
+                    -s "protocolMapper=oidc-audience-mapper" \
+                    -s "config.\"included.client.audience\"=$audience" \
+                    -s "config.\"access.token.claim\"=true" \
+                    -s "config.\"id.token.claim\"=false" \
+                    -s "config.\"userinfo.token.claim\"=false"
+                  echo "✅ Updated Keycloak mapper $mapper_name for $client_id"
+                  return 0
+                fi
+
+                $KCADM create "clients/$client_uuid/protocol-mappers/models" -r "$REALM" \
+                  -s "name=$mapper_name" \
+                  -s "protocol=openid-connect" \
+                  -s "protocolMapper=oidc-audience-mapper" \
+                  -s "config.\"included.client.audience\"=$audience" \
+                  -s "config.\"access.token.claim\"=true" \
+                  -s "config.\"id.token.claim\"=false" \
+                  -s "config.\"userinfo.token.claim\"=false"
+                echo "✅ Added Keycloak mapper $mapper_name for $client_id"
+              }
+
               ensure_workbench_redirects() {
                 local client_id="$1"
                 local client_uuid=""
@@ -370,6 +425,22 @@ spec:
                 echo "Enabled direct access grants for $client_id"
               }
 
+              ensure_service_accounts_enabled() {
+                local client_id="$1"
+                local client_uuid=""
+
+                client_uuid="$(get_client_uuid "$client_id")"
+                if [ -z "$client_uuid" ] || [ "$client_uuid" = "id" ]; then
+                  echo "❌ Keycloak client not found: $client_id"
+                  exit 1
+                fi
+
+                echo "Enabling service accounts for $client_id"
+                $KCADM update "clients/$client_uuid" -r "$REALM" \
+                  -s "serviceAccountsEnabled=true" >/dev/null
+                echo "Enabled service accounts for $client_id"
+              }
+
               ensure_client_secret() {
                 local client_id="$1"
                 local client_secret="$2"
@@ -385,9 +456,24 @@ spec:
                 $KCADM update "clients/$client_uuid" -r "$REALM" \
                   -s "publicClient=false" \
                   -s "bearerOnly=false" \
-                  -s "clientAuthenticatorType=client-secret" >/dev/null 2>&1 || true
-                $KCADM update "clients/$client_uuid/client-secret" -r "$REALM" \
-                  -s "value=$client_secret" >/dev/null 2>&1 || true
+                  -s "clientAuthenticatorType=client-secret" >/dev/null 2>&1
+                tmp_secret="$(mktemp)"
+                printf '{"type":"secret","value":"%s"}' "$client_secret" > "$tmp_secret"
+                if ! $KCADM update "clients/$client_uuid/client-secret" -r "$REALM" -f "$tmp_secret" >/dev/null 2>&1; then
+                  rm -f "$tmp_secret"
+                  echo "❌ Failed to update client secret for $client_id"
+                  exit 1
+                fi
+                rm -f "$tmp_secret"
+                current_secret="$($KCADM get "clients/$client_uuid/client-secret" -r "$REALM" --fields value --format csv | tr -d '\r\"' | tail -n1)"
+                if [ -z "$current_secret" ]; then
+                  echo "❌ Unable to read client secret for $client_id"
+                  exit 1
+                fi
+                if [ "$current_secret" != "$client_secret" ]; then
+                  echo "❌ Client secret mismatch after update for $client_id"
+                  exit 1
+                fi
               }
 
               ensure_controller_user() {
@@ -607,9 +693,12 @@ spec:
               ensure_roles_mapper "$KOGITO_CONSOLE_CLIENT_ID"
               ensure_client_roles_mapper "$WORKBENCH_CLIENT_ID"
               ensure_client_roles_mapper "$KOGITO_CONSOLE_CLIENT_ID"
+              ensure_audience_mapper "$WORKBENCH_CLIENT_ID" "$KIE_SERVER_SERVICE_CLIENT_ID"
+              ensure_audience_mapper "$WORKBENCH_CLIENT_ID" "$KIE_SERVER_CLIENT_ID"
               ensure_workbench_redirects "$WORKBENCH_CLIENT_ID"
               ensure_direct_access_grants "$WORKBENCH_CLIENT_ID"
               ensure_direct_access_grants "$KIE_SERVER_CLIENT_ID"
+              ensure_service_accounts_enabled "$WORKBENCH_CLIENT_ID"
               ensure_client_secret "$KIE_SERVER_CLIENT_ID" "$KIE_SERVER_CLIENT_SECRET"
               ensure_client_secret "$KIE_SERVER_SERVICE_CLIENT_ID" "$KIE_SERVER_SERVICE_CLIENT_SECRET"
               ensure_controller_user "$CONTROLLER_USER" "$CONTROLLER_PASSWORD"

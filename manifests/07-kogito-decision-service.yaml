@@ -21,7 +21,142 @@ spec:
       labels:
         app: kogito-decision-service
     spec:
+      serviceAccountName: drools-kogito-decisions
       initContainers:
+        - name: vault-oidc-config
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+              apk add --no-cache jq curl
+              VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
+                role=drools \
+                jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token))
+              export VAULT_TOKEN
+
+              OIDC_ENV_FILE="/shared/oidc-env.sh"
+              : > "$OIDC_ENV_FILE"
+              OIDC_AUTH_URL="https://auth.suncoast.systems"
+              OIDC_REALM="internal"
+              echo "export OIDC_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
+              echo "export OIDC_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
+              echo "export OIDC_KIE_SERVER_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
+              echo "export OIDC_KIE_SERVER_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
+
+              REALM_JSON="$(curl -fsSL "$OIDC_AUTH_URL/realms/$OIDC_REALM")"
+              OIDC_PUBLIC_KEY="$(printf '%s' "$REALM_JSON" | jq -r '.public_key // empty')"
+              if [ -z "${OIDC_PUBLIC_KEY:-}" ]; then
+                echo "❌ Keycloak realm public key not found"
+                exit 1
+              fi
+              OIDC_PUBLIC_KEY_PEM="$(printf '-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----' "$OIDC_PUBLIC_KEY")"
+              printf 'export OIDC_JWT_PUBLIC_KEY="%s"\n' "$OIDC_PUBLIC_KEY_PEM" >> "$OIDC_ENV_FILE"
+
+              WB_ID_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-workbench 2>/dev/null || true)"
+              WB_ID="$(printf '%s' "$WB_ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "${WB_ID:-}" ]; then
+                echo "❌ OIDC client id not found at secret/keycloak-client-id-drools-workbench"
+                exit 1
+              fi
+              echo "export OIDC_CLIENT_ID=\"$WB_ID\"" >> "$OIDC_ENV_FILE"
+
+              WB_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-workbench 2>/dev/null || true)"
+              WB_SECRET="$(printf '%s' "$WB_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "${WB_SECRET:-}" ]; then
+                echo "❌ OIDC client secret not found at secret/keycloak-client-secret-drools-workbench"
+                exit 1
+              fi
+              echo "export OIDC_CLIENT_SECRET=\"$WB_SECRET\"" >> "$OIDC_ENV_FILE"
+
+              KIE_OIDC_ID_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-kie-server 2>/dev/null || true)"
+              KIE_OIDC_ID="$(printf '%s' "$KIE_OIDC_ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              if [ -z "${KIE_OIDC_ID:-}" ]; then
+                echo "❌ OIDC client id not found at secret/keycloak-client-id-drools-kie-server"
+                exit 1
+              fi
+              echo "export OIDC_KIE_SERVER_CLIENT_ID=\"$KIE_OIDC_ID\"" >> "$OIDC_ENV_FILE"
+
+              KIE_OIDC_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server 2>/dev/null || true)"
+              KIE_OIDC_SECRET="$(printf '%s' "$KIE_OIDC_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "${KIE_OIDC_SECRET:-}" ]; then
+                echo "❌ OIDC client secret not found at secret/keycloak-client-secret-drools-kie-server"
+                exit 1
+              fi
+              echo "export OIDC_KIE_SERVER_CLIENT_SECRET=\"$KIE_OIDC_SECRET\"" >> "$OIDC_ENV_FILE"
+          volumeMounts:
+            - name: vault-secrets
+              mountPath: /shared
+        - name: configure-healthcheck
+          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
+          command: ["/bin/sh", "-c"]
+          args: ["/redirect/run-cli.sh"]
+          volumeMounts:
+            - { name: decision-config, mountPath: /config }
+            - { name: decision-redirect-cli, mountPath: /redirect }
+        - name: copy-wildfly-modules
+          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+              cp -R /opt/jboss/wildfly/modules/. /target/
+              echo "✅ WildFly modules copied"
+          volumeMounts:
+            - { name: wildfly-modules, mountPath: /target }
+        - name: install-keycloak-adapter
+          image: alpine:3.20
+          command: ["/bin/sh","-c"]
+          env:
+            - name: KEYCLOAK_ADAPTER_URL
+              value: "https://repo1.maven.org/maven2/org/keycloak/keycloak-wildfly-adapter-dist/16.1.1/keycloak-wildfly-adapter-dist-16.1.1.zip"
+          args:
+            - |
+              set -euo pipefail
+              apk add --no-cache curl unzip
+              WORK="/tmp/keycloak"
+              mkdir -p "$WORK"
+              echo "⬇️  Downloading Keycloak WildFly adapter..."
+              curl -fsSL "$KEYCLOAK_ADAPTER_URL" -o "$WORK/adapter.zip"
+              unzip -q "$WORK/adapter.zip" -d "$WORK"
+              ADAPTER_DIR="$(find "$WORK" -maxdepth 1 -type d -name "keycloak-wildfly-adapter-dist*" | head -n1)"
+              if [ -z "$ADAPTER_DIR" ] || [ ! -d "$ADAPTER_DIR/modules" ]; then
+                if [ -d "$WORK/modules" ]; then
+                  ADAPTER_DIR="$WORK"
+                else
+                  echo "❌ Keycloak adapter modules not found in distribution."
+                  find "$WORK" -maxdepth 2 -type d -name "modules" -print || true
+                  exit 1
+                fi
+              fi
+              cp -R "$ADAPTER_DIR/modules/." /target/
+              if [ -d /target/system/add-ons/keycloak/org/keycloak ]; then
+                mkdir -p /target/system/layers/base/org
+                cp -R /target/system/add-ons/keycloak/org/keycloak /target/system/layers/base/org/
+              fi
+              echo "✅ Keycloak adapter modules installed"
+          volumeMounts:
+            - { name: wildfly-modules, mountPath: /target }
+        - name: configure-oidc
+          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -e
+              sh /oidc/configure-oidc.sh
+          env:
+            - { name: OIDC_ENABLE, value: "true" }
+            - { name: WILDFLY_SERVER_CONFIG, value: "standalone-full.xml" }
+          volumeMounts:
+            - { name: decision-config, mountPath: /opt/jboss/wildfly/standalone/configuration }
+            - { name: wildfly-oidc, mountPath: /oidc }
+            - { name: vault-secrets, mountPath: /vault-secrets }
+            - { name: wildfly-modules, mountPath: /opt/jboss/wildfly/modules }
         - name: setup-redirect
           image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
           command: ["/bin/bash", "-c"]
@@ -37,19 +172,17 @@ spec:
           volumeMounts:
             - name: welcome-content
               mountPath: /shared
-        - name: configure-healthcheck
-          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
-          command: ["/bin/sh", "-c"]
-          args: ["/redirect/run-cli.sh"]
-          volumeMounts:
-            - { name: decision-config, mountPath: /config }
-            - { name: decision-redirect-cli, mountPath: /redirect }
       containers:
         - name: kogito-decision-service
           image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
           command: ["/bin/bash", "-c"]
           args:
-            - exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml
+            - |
+              if [ -f /vault-secrets/oidc-env.sh ]; then
+                # shellcheck disable=SC1091
+                . /vault-secrets/oidc-env.sh
+              fi
+              exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -c standalone-full.xml
           ports:
             - containerPort: 8080
           volumeMounts:
@@ -57,6 +190,8 @@ spec:
             - name: welcome-content
               mountPath: /opt/jboss/wildfly/welcome-content
               subPath: welcome-content
+            - { name: vault-secrets, mountPath: /vault-secrets }
+            - { name: wildfly-modules, mountPath: /opt/jboss/wildfly/modules }
           env:
             - { name: JAVA_OPTS, value: "-Xms512m -Xmx2048m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8 -Dorg.drools.server.filter.classes=true" }
             - { name: KIE_SERVER_LOCATION, value: "http://kogito-decision-service.drools.svc.cluster.local:8080/kie-server/services/rest/server" }
@@ -89,6 +224,16 @@ spec:
             items:
               - { key: enable-redirect.cli, path: enable-redirect.cli, mode: 0444 }
               - { key: run-cli.sh, path: run-cli.sh, mode: 0555 }
+        - name: vault-secrets
+          emptyDir: {}
+        - name: wildfly-oidc
+          configMap:
+            name: wildfly-oidc-config-kieserver
+            items:
+              - { key: enable-oidc.cli,    path: enable-oidc.cli,    mode: 0444 }
+              - { key: configure-oidc.sh,  path: configure-oidc.sh,  mode: 0555 }
+        - name: wildfly-modules
+          emptyDir: {}
 
 ---
 apiVersion: v1
@@ -103,12 +248,12 @@ metadata:
     gravitee.io/approval-required: "admin"
 
     gravitee.io/description: "Drools Kogito Decision API"
-    gravitee.io/version: "latest-20260121-1"
+    gravitee.io/version: "latest-20260121-2"
     gravitee.io/tags: "drools,decision,kogito"
     gravitee.io/definition-name: "drools-decision-service"
     gravitee.io/definition-summary: "Drools Decision Service"
     gravitee.io/definition-description: "Decision execution API"
-    gravitee.io/definition-version: "latest-20260121-1"
+    gravitee.io/definition-version: "latest-20260121-2"
     gravitee.io/definition-type: "HTTP"
     gravitee.io/definition-openapi-url: "http://kogito-decision-openapi.drools.svc.cluster.local:8080/openapi.json"
     gravitee.io/definition-context-path: "/decisions"
@@ -131,7 +276,7 @@ metadata:
     gravitee.io/definition-endpoint-groups: '[{"name":"default","type":"http-proxy","sharedConfiguration":{"http":{"version":"HTTP_1_1","connectTimeout":30000,"readTimeout":300000,"idleTimeout":300000,"keepAlive":true,"keepAliveTimeout":30000,"pipelining":false,"useCompression":false,"propagateClientAcceptEncoding":false,"followRedirects":false,"maxConcurrentConnections":20}},"services":{"healthCheck":{"enabled":true,"overrideConfiguration":true,"type":"http-health-check","configuration":{"schedule":"*/30 * * * * *","target":"/kie-server/services/rest/server/healthcheck","method":"GET","overrideEndpointPath":true,"headers":[],"assertion":"{#response.status == 200 || #response.status == 401 || #response.status == 403}","successThreshold":2,"failureThreshold":2}}},"endpoints":[{"name":"decision-service-http","type":"http-proxy","inheritConfiguration":true,"weight":1,"configuration":{"target":"http://kogito-decision-service.drools.svc.cluster.local:8080"},"secondary":false}]}]'
     gravitee.io/definition-pages: '{"swagger":{"type":"SWAGGER","name":"openapi","published":true,"visibility":"PUBLIC","homepage":false,"source":{"type":"http-fetcher","configuration":{"url":"http://kogito-decision-openapi.drools.svc.cluster.local:8080/openapi.json","autoFetch":true,"fetchCron":"0 */5 * * * *","useSystemProxy":false}}}}'
     gravitee.io/definition-plans: '{"bearer-internal":{"name":"Bearer Token","description":"Bearer token (validated by JWT policy)","security":{"type":"KEY_LESS"},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Bearer \")}"}}'
-    gravitee.io/definition-flows: '[{"name":"token-exchange","enabled":true,"request":[{"name":"keycloak-token-exchange","policy":"policy-http-callout","enabled":true,"description":"Exchange token to internal realm","messageCondition":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Bearer \")}","configuration":{"url":"{#properties[\"token_exchange_url\"]}","method":"POST","headers":[{"name":"Content-Type","value":"application/x-www-form-urlencoded"}],"body":"grant_type=urn:ietf:params:oauth:grant-type:token-exchange&client_id={#properties[\"token_exchange_client_id\"]}&client_secret={#properties[\"token_exchange_client_secret\"]}&subject_token={#request.headers[\"authorization\"][0].substring(7)}","exitOnError":true,"variables":[{"name":"exchanged_token","value":"{#jsonPath(#calloutResponse.content, ''$.access_token'')}"}]}},{"name":"strip-auth-header","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchanged_token\"] != null}","configuration":{"removeHeaders":["Authorization"]}},{"name":"apply-exchanged-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchanged_token\"] != null}","configuration":{"addHeaders":[{"name":"Authorization","value":"Bearer {#context.attributes[\"exchanged_token\"]}"}]}},{"name":"validate-jwt","policy":"jwt","enabled":true,"messageCondition":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Bearer \")}","configuration":{"signature":"RSA_RS256","publicKeyResolver":"JWKS_URL","resolverParameter":"https://auth.suncoast.systems/realms/internal/protocol/openid-connect/certs","extractClaims":true,"userClaim":"preferred_username","propagateAuthHeader":true}}]}]'
+    gravitee.io/definition-flows: '[{"name":"token-exchange","enabled":true,"request":[{"name":"keycloak-token-exchange","policy":"policy-http-callout","enabled":true,"description":"Exchange token to internal realm","messageCondition":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Bearer \")}","configuration":{"url":"{#properties[\"token_exchange_url\"]}","method":"POST","headers":[{"name":"Content-Type","value":"application/x-www-form-urlencoded"}],"body":"grant_type=urn:ietf:params:oauth:grant-type:token-exchange&client_id={#properties[\"token_exchange_client_id\"]}&client_secret={#properties[\"token_exchange_client_secret\"]}&subject_token={#request.headers[\"authorization\"][0].substring(7)}","exitOnError":false,"variables":[{"name":"exchanged_token","value":"{#calloutResponse != null && #calloutResponse.status == 200 ? #jsonPath(#calloutResponse.content, \"$.access_token\") : null}"}]}},{"name":"strip-auth-header","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchanged_token\"] != null && #context.attributes[\"exchanged_token\"].length() > 0}","configuration":{"removeHeaders":["Authorization"]}},{"name":"apply-exchanged-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchanged_token\"] != null && #context.attributes[\"exchanged_token\"].length() > 0}","configuration":{"addHeaders":[{"name":"Authorization","value":"Bearer {#context.attributes[\"exchanged_token\"]}"}]}},{"name":"validate-jwt","policy":"jwt","enabled":true,"messageCondition":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Bearer \")}","configuration":{"signature":"RSA_RS256","publicKeyResolver":"JWKS_URL","resolverParameter":"https://auth.suncoast.systems/realms/internal/protocol/openid-connect/certs","extractClaims":true,"userClaim":"preferred_username","propagateAuthHeader":true}}]}]'
     gravitee.io/definition-response-templates: '{}'
     gravitee.io/definition-analytics: '{"enabled":true,"logging":{"condition":"true","content":{"headers":true,"payload":false,"messageHeaders":false,"messageMetadata":false,"messagePayload":false},"mode":{"entrypoint":true,"endpoint":true},"phase":{"request":true,"response":true}}}'
     gravitee.io/definition-entrypoints: '[]'

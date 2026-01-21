@@ -59,8 +59,8 @@ data:
       /subsystem=elytron/simple-role-decoder=from-roles-attribute:write-attribute(name=attribute,value=Roles)
     end-if
     # Ensure KieRealm exists so ApplicationDomain can always reference it.
-    if (outcome != success) of /subsystem=elytron/identity-realm=KieRealm:read-resource()
-      /subsystem=elytron/identity-realm=KieRealm:add(identity="kie")
+    if (outcome != success) of /subsystem=elytron/filesystem-realm=KieRealm:read-resource()
+      /subsystem=elytron/filesystem-realm=KieRealm:add(path=kie-realm,relative-to=jboss.server.config.dir)
     end-if
     /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=realms,value=[{realm=KeycloakRealm,role-decoder=from-roles-attribute},{realm=KieRealm,role-decoder=from-roles-attribute},{realm=ApplicationRealm,role-decoder=groups-to-roles},{realm=local}])
     if (outcome == success) of /subsystem=elytron/security-domain=ApplicationDomain:read-attribute(name=default-realm)

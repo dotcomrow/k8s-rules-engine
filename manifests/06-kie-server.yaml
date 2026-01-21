@@ -274,7 +274,7 @@ spec:
               wait "$PID" || true
               echo "Schema init complete"
           env:
-            - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0 -Dorg.drools.server.filter.classes=true -Dorg.kie.server.persistence.ds=java:jboss/datasources/KieServerDS -Dorg.kie.server.persistence.dialect=org.hibernate.dialect.PostgreSQLDialect -Dorg.jbpm.persistence.jpa.properties.hibernate.hbm2ddl.auto=create" }
+            - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0 -Dorg.drools.server.filter.classes=true -Dorg.kie.server.persistence.ds=java:jboss/datasources/KieServerDS -Dorg.kie.server.persistence.dialect=org.hibernate.dialect.PostgreSQLDialect -Dorg.jbpm.persistence.jpa.properties.hibernate.hbm2ddl.auto=create -Dorg.jbpm.persistence.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true -Dorg.jbpm.query.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true" }
             - { name: KIE_SERVER_EXTENSIONS, value: "BRM,DMN,BPM,CaseMgmt,Planner" }
           volumeMounts:
             - { name: kieserver-config, mountPath: /opt/jboss/wildfly/standalone/configuration }
@@ -701,7 +701,7 @@ spec:
           ports:
             - { containerPort: 8080 }
           env:
-            - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0 -Dorg.drools.server.filter.classes=true -Dorg.kie.server.persistence.ds=java:jboss/datasources/KieServerDS -Dorg.kie.server.persistence.dialect=org.hibernate.dialect.PostgreSQLDialect -Dorg.jbpm.persistence.jpa.properties.hibernate.hbm2ddl.auto=validate" }
+            - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0 -Dorg.drools.server.filter.classes=true -Dorg.kie.server.persistence.ds=java:jboss/datasources/KieServerDS -Dorg.kie.server.persistence.dialect=org.hibernate.dialect.PostgreSQLDialect -Dorg.jbpm.persistence.jpa.properties.hibernate.hbm2ddl.auto=validate -Dorg.jbpm.persistence.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true -Dorg.jbpm.query.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true" }
             - { name: KIE_SERVER_ID,       value: "kie-server" }
             - { name: KIE_SERVER_LOCATION, value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server" }
             - { name: KIE_SERVER_CONTROLLER, value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller" }

@@ -51,8 +51,20 @@ data:
     if (outcome != success) of /subsystem=elytron/custom-realm=KeycloakRealm:read-resource()
       /subsystem=elytron/custom-realm=KeycloakRealm:add(class-name=org.keycloak.adapters.elytron.KeycloakSecurityRealm,module=org.keycloak.keycloak-wildfly-elytron-oidc-adapter)
     end-if
+    # Ensure role decoder exists before wiring ApplicationDomain.
+    if (outcome != success) of /subsystem=elytron/simple-role-decoder=from-roles-attribute:read-resource()
+      /subsystem=elytron/simple-role-decoder=from-roles-attribute:add(attribute=Roles)
+    end-if
+    if (outcome == success) of /subsystem=elytron/simple-role-decoder=from-roles-attribute:read-resource()
+      /subsystem=elytron/simple-role-decoder=from-roles-attribute:write-attribute(name=attribute,value=Roles)
+    end-if
     if (outcome == success) of /subsystem=elytron/security-domain=ApplicationDomain:read-resource()
-      /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=realms,value=[{realm=KeycloakRealm,role-decoder=from-roles-attribute},{realm=KieRealm,role-decoder=from-roles-attribute},{realm=ApplicationRealm,role-decoder=groups-to-roles},{realm=local}])
+      if (outcome == success) of /subsystem=elytron/identity-realm=KieRealm:read-resource()
+        /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=realms,value=[{realm=KeycloakRealm,role-decoder=from-roles-attribute},{realm=KieRealm,role-decoder=from-roles-attribute},{realm=ApplicationRealm,role-decoder=groups-to-roles},{realm=local}])
+      end-if
+      if (outcome != success) of /subsystem=elytron/identity-realm=KieRealm:read-resource()
+        /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=realms,value=[{realm=KeycloakRealm,role-decoder=from-roles-attribute},{realm=ApplicationRealm,role-decoder=groups-to-roles},{realm=local}])
+      end-if
     end-if
     if (outcome == success) of /subsystem=elytron/security-domain=ApplicationDomain:read-attribute(name=default-realm)
       /subsystem=elytron/security-domain=ApplicationDomain:write-attribute(name=default-realm,value=KeycloakRealm)
@@ -123,10 +135,6 @@ data:
     end-if
     if (outcome != success) of /subsystem=logging/logger=org.keycloak.adapters.BearerTokenRequestAuthenticator:read-resource()
       /subsystem=logging/logger=org.keycloak.adapters.BearerTokenRequestAuthenticator:add(level=TRACE)
-    end-if
-    # Keycloak adapter stores roles in the "Roles" attribute; align Elytron role decoder.
-    if (outcome == success) of /subsystem=elytron/simple-role-decoder=from-roles-attribute:read-resource()
-      /subsystem=elytron/simple-role-decoder=from-roles-attribute:write-attribute(name=attribute,value=Roles)
     end-if
     # Ensure CGLIB is available to deployments (XStream uses it for DRL assets).
     if (outcome == success) of /subsystem=ee:read-attribute(name=global-modules)

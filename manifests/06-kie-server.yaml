@@ -127,9 +127,29 @@ spec:
           args:
             - |
               set -euo pipefail
+              if [ -f /vault-secrets/schema-ready ]; then
+                echo "Schema already present; skipping config copy"
+                exit 0
+              fi
               cp -a /opt/jboss/wildfly/standalone/configuration/* /config/
           volumeMounts:
             - { name: kieserver-config, mountPath: /config }
+            - { name: vault-secrets, mountPath: /vault-secrets }
+        - name: copy-wildfly-modules
+          image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+              if [ -f /vault-secrets/schema-ready ]; then
+                echo "Schema already present; skipping module copy"
+                exit 0
+              fi
+              cp -R /opt/jboss/wildfly/modules/. /target/
+              echo "OK: WildFly modules copied"
+          volumeMounts:
+            - { name: wildfly-modules, mountPath: /target }
+            - { name: vault-secrets, mountPath: /vault-secrets }
         - name: install-postgresql-driver
           image: alpine:3.20
           command: ["/bin/sh","-c"]
@@ -139,6 +159,10 @@ spec:
           args:
             - |
               set -euo pipefail
+              if [ -f /vault-secrets/schema-ready ]; then
+                echo "Schema already present; skipping JDBC driver install"
+                exit 0
+              fi
               apk add --no-cache curl
               DEST="/target/system/layers/base/org/postgresql/main"
               mkdir -p "$DEST"
@@ -160,12 +184,17 @@ spec:
               echo "OK: PostgreSQL driver module installed"
           volumeMounts:
             - { name: wildfly-modules, mountPath: /target }
+            - { name: vault-secrets, mountPath: /vault-secrets }
         - name: configure-datasource
           image: quay.io/kiegroup/kie-server-showcase:7.74.1.Final
           command: ["/bin/sh","-c"]
           args:
             - |
               set -euo pipefail
+              if [ -f /vault-secrets/schema-ready ]; then
+                echo "Schema already present; skipping datasource config"
+                exit 0
+              fi
               if [ ! -f /vault-secrets/db-env.sh ]; then
                 echo "ERROR: DB credentials file not found at /vault-secrets/db-env.sh"
                 exit 1

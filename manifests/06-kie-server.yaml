@@ -769,25 +769,15 @@ spec:
         - name: register-queries
           image: curlimages/curl:8.12.1
           command: ["/bin/sh","-c"]
-          env:
-            - { name: DEBUG_HOLD_SECONDS, value: "3600" }
           args:
             - |
               set -euo pipefail
-              DEBUG_HOLD_SECONDS="${DEBUG_HOLD_SECONDS:-3600}"
-              hold_for_debug() {
-                if [ "$DEBUG_HOLD_SECONDS" -gt 0 ]; then
-                  echo "DEBUG: holding pod for ${DEBUG_HOLD_SECONDS}s to allow log collection"
-                  sleep "$DEBUG_HOLD_SECONDS"
-                fi
-              }
-              trap hold_for_debug EXIT
               cleanup_proxy() {
                 curl -fsS -X POST http://127.0.0.1:4191/shutdown >/dev/null 2>&1 || true
                 killall -s TERM linkerd-proxy >/dev/null 2>&1 || true
                 killall -s TERM linkerd2-proxy >/dev/null 2>&1 || true
               }
-              # trap cleanup_proxy EXIT
+              trap cleanup_proxy EXIT
               if [ ! -f /vault-secrets/kie-users-env.sh ]; then
                 echo "ERROR: KIE credentials not found"
                 exit 1

@@ -165,7 +165,30 @@ data:
         "query-name": "jbpmHumanTasks",
         "query-source": "${org.kie.server.persistence.ds}",
         "query-expression": "select t.activationTime, t.actualOwner, t.createdBy, t.createdOn, t.deploymentId, t.description, t.dueDate, t.name, t.parentId, t.priority, t.processId, t.processInstanceId, t.processSessionId, t.status, t.taskId, t.workItemId, t.lastModificationDate, pil.correlationKey, pil.processInstanceDescription, nil.sla_due_date, nil.slaCompliance from AuditTaskImpl t left join ProcessInstanceLog pil on pil.processInstanceId=t.processInstanceId left join NodeInstanceLog nil on nil.workItemId=t.workItemId",
-        "query-target": "CUSTOM"
+        "query-target": "CUSTOM",
+        "query-columns": {
+          "activationtime": "DATE",
+          "actualowner": "LABEL",
+          "createdby": "LABEL",
+          "createdon": "DATE",
+          "deploymentid": "LABEL",
+          "description": "LABEL",
+          "duedate": "DATE",
+          "name": "LABEL",
+          "parentid": "NUMBER",
+          "priority": "NUMBER",
+          "processid": "LABEL",
+          "processinstanceid": "NUMBER",
+          "processsessionid": "NUMBER",
+          "status": "LABEL",
+          "taskid": "NUMBER",
+          "workitemid": "NUMBER",
+          "lastmodificationdate": "DATE",
+          "correlationkey": "LABEL",
+          "processinstancedescription": "LABEL",
+          "sla_due_date": "DATE",
+          "slacompliance": "NUMBER"
+        }
       },
       {
         "query-name": "jbpmHumanTasksWithAdmin",
@@ -202,49 +225,161 @@ data:
         "query-name": "jbpmHumanTasksWithUser",
         "query-source": "${org.kie.server.persistence.ds}",
         "query-expression": "select t.activationTime, t.actualOwner, t.createdBy, t.createdOn, t.deploymentId, t.description, t.dueDate, t.name, t.parentId, t.priority, t.processId, t.processInstanceId, t.processSessionId, t.status, t.taskId, t.workItemId, t.lastModificationDate, pil.correlationKey, pil.processInstanceDescription , oe.id, eo.entity_id, nil.sla_due_date, nil.slaCompliance from AuditTaskImpl t left join PeopleAssignments_PotOwners po on t.taskId=po.task_id left join OrganizationalEntity oe on po.entity_id=oe.id left join ProcessInstanceLog pil on pil.processInstanceId=t.processInstanceId left join PeopleAssignments_ExclOwners eo on t.taskId=eo.task_id left join NodeInstanceLog nil on nil.workItemId=t.workItemId",
-        "query-target": "FILTERED_PO_TASK"
+        "query-target": "FILTERED_PO_TASK",
+        "query-columns": {
+          "activationtime": "DATE",
+          "actualowner": "LABEL",
+          "createdby": "LABEL",
+          "createdon": "DATE",
+          "deploymentid": "LABEL",
+          "description": "LABEL",
+          "duedate": "DATE",
+          "name": "LABEL",
+          "parentid": "NUMBER",
+          "priority": "NUMBER",
+          "processid": "LABEL",
+          "processinstanceid": "NUMBER",
+          "processsessionid": "NUMBER",
+          "status": "LABEL",
+          "taskid": "NUMBER",
+          "workitemid": "NUMBER",
+          "lastmodificationdate": "DATE",
+          "correlationkey": "LABEL",
+          "processinstancedescription": "LABEL",
+          "id": "LABEL",
+          "entity_id": "LABEL",
+          "sla_due_date": "DATE",
+          "slacompliance": "NUMBER"
+        }
       },
       {
         "query-name": "jbpmHumanTasksWithVariables",
         "query-source": "${org.kie.server.persistence.ds}",
         "query-expression": "select tvi.taskId, tvi.name, tvi.value from TaskVariableImpl tvi",
-        "query-target": "CUSTOM"
+        "query-target": "CUSTOM",
+        "query-columns": {
+          "taskid": "NUMBER",
+          "name": "LABEL",
+          "value": "LABEL"
+        }
       },
       {
         "query-name": "jbpmProcessInstanceLogs",
         "query-source": "${org.kie.server.persistence.ds}",
         "query-expression": "select log.id, log.nodeId, log.nodeName, log.nodeType, log.externalId, log.processInstanceId, log.log_date, log.connection, log.type, log.workItemId, log.referenceId, log.nodeContainerId, log.sla_due_date, log.slaCompliance from NodeInstanceLog log ",
-        "query-target": "CUSTOM"
+        "query-target": "CUSTOM",
+        "query-columns": {
+          "id": "NUMBER",
+          "nodeid": "LABEL",
+          "nodename": "LABEL",
+          "nodetype": "LABEL",
+          "externalid": "LABEL",
+          "processinstanceid": "NUMBER",
+          "log_date": "DATE",
+          "connection": "LABEL",
+          "type": "NUMBER",
+          "workitemid": "NUMBER",
+          "referenceid": "NUMBER",
+          "nodecontainerid": "LABEL",
+          "sla_due_date": "DATE",
+          "slacompliance": "NUMBER"
+        }
       },
       {
         "query-name": "jbpmProcessInstances",
         "query-source": "${org.kie.server.persistence.ds}",
         "query-expression": "SELECT LOG.PROCESSINSTANCEID, LOG.PROCESSID, LOG.START_DATE, LOG.END_DATE, LOG.STATUS, LOG.PARENTPROCESSINSTANCEID, LOG.OUTCOME, LOG.DURATION, LOG.USER_IDENTITY, LOG.PROCESSVERSION, LOG.PROCESSNAME, LOG.CORRELATIONKEY, LOG.EXTERNALID, LOG.PROCESSINSTANCEDESCRIPTION, LOG.SLA_DUE_DATE, LOG.SLACOMPLIANCE, COALESCE ( INFO.LASTMODIFICATIONDATE, LOG.END_DATE ) AS LASTMODIFICATIONDATE, COUNT( ERRINFO.ID ) ERRORCOUNT FROM ProcessInstanceLog LOG LEFT JOIN ExecutionErrorInfo ERRINFO ON ERRINFO.PROCESS_INST_ID=LOG.PROCESSINSTANCEID AND ERRINFO.ERROR_ACK=0 LEFT JOIN ProcessInstanceInfo INFO ON INFO.INSTANCEID=LOG.PROCESSINSTANCEID GROUP BY LOG.PROCESSINSTANCEID, LOG.PROCESSID, LOG.START_DATE, LOG.END_DATE, LOG.STATUS, LOG.PARENTPROCESSINSTANCEID, LOG.OUTCOME, LOG.DURATION, LOG.USER_IDENTITY, LOG.PROCESSVERSION, LOG.PROCESSNAME, LOG.CORRELATIONKEY, LOG.EXTERNALID, LOG.PROCESSINSTANCEDESCRIPTION, LOG.SLA_DUE_DATE, LOG.SLACOMPLIANCE, COALESCE ( INFO.LASTMODIFICATIONDATE, LOG.END_DATE )",
-        "query-target": "CUSTOM"
+        "query-target": "CUSTOM",
+        "query-columns": {
+          "processinstanceid": "NUMBER",
+          "processid": "LABEL",
+          "start_date": "DATE",
+          "end_date": "DATE",
+          "status": "NUMBER",
+          "parentprocessinstanceid": "NUMBER",
+          "outcome": "LABEL",
+          "duration": "NUMBER",
+          "user_identity": "LABEL",
+          "processversion": "LABEL",
+          "processname": "LABEL",
+          "correlationkey": "LABEL",
+          "externalid": "LABEL",
+          "processinstancedescription": "LABEL",
+          "sla_due_date": "DATE",
+          "slacompliance": "NUMBER",
+          "lastmodificationdate": "DATE",
+          "errorcount": "NUMBER"
+        }
       },
       {
         "query-name": "jbpmProcessInstancesWithVariables",
         "query-source": "${org.kie.server.persistence.ds}",
         "query-expression": "select vil.processInstanceId, vil.processId, vil.id, vil.variableId, vil.value from VariableInstanceLog vil left join VariableInstanceLog vil2 on vil.processInstanceId = vil2.processInstanceId and vil.variableId = vil2.variableId and vil.id < vil2.id where vil2.id is null",
-        "query-target": "CUSTOM"
+        "query-target": "CUSTOM",
+        "query-columns": {
+          "processinstanceid": "NUMBER",
+          "processid": "LABEL",
+          "id": "NUMBER",
+          "variableid": "LABEL",
+          "value": "LABEL"
+        }
       },
       {
         "query-name": "jbpmRequestList",
         "query-source": "${org.kie.server.persistence.ds}",
         "query-expression": "select ri.id, ri.timestamp, ri.status, ri.commandName, ri.message, ri.businessKey, ri.retries, ri.executions, pil.processName, pil.processInstanceId, pil.processInstanceDescription, ri.deploymentId from RequestInfo ri left join ProcessInstanceLog pil on pil.processInstanceId=ri.processInstanceId",
-        "query-target": "CUSTOM"
+        "query-target": "CUSTOM",
+        "query-columns": {
+          "id": "NUMBER",
+          "timestamp": "DATE",
+          "status": "NUMBER",
+          "commandname": "LABEL",
+          "message": "LABEL",
+          "businesskey": "LABEL",
+          "retries": "NUMBER",
+          "executions": "NUMBER",
+          "processname": "LABEL",
+          "processinstanceid": "NUMBER",
+          "processinstancedescription": "LABEL",
+          "deploymentid": "LABEL"
+        }
       },
       {
         "query-name": "processesMonitoring",
         "query-source": "${org.kie.server.persistence.ds}",
         "query-expression": "select log.processInstanceId, log.processId, log.start_date, log.end_date, log.status, log.duration, log.user_identity, log.processVersion, log.processName, log.externalId from ProcessInstanceLog log",
-        "query-target": "CUSTOM"
+        "query-target": "CUSTOM",
+        "query-columns": {
+          "processinstanceid": "NUMBER",
+          "processid": "LABEL",
+          "start_date": "DATE",
+          "end_date": "DATE",
+          "status": "NUMBER",
+          "duration": "NUMBER",
+          "user_identity": "LABEL",
+          "processversion": "LABEL",
+          "processname": "LABEL",
+          "externalid": "LABEL"
+        }
       },
       {
         "query-name": "tasksMonitoring",
         "query-source": "${org.kie.server.persistence.ds}",
         "query-expression": "select p.processName, p.externalId, t.taskId, t.taskName, t.status, t.createdDate, t.startDate, t.endDate, t.processInstanceId, t.userId, t.duration from ProcessInstanceLog p inner join BAMTaskSummary t on (t.processInstanceId = p.processInstanceId) inner join (select min(pk) as pk from BAMTaskSummary group by taskId) d on t.pk = d.pk",
-        "query-target": "CUSTOM"
+        "query-target": "CUSTOM",
+        "query-columns": {
+          "processname": "LABEL",
+          "externalid": "LABEL",
+          "taskid": "NUMBER",
+          "taskname": "LABEL",
+          "status": "LABEL",
+          "createddate": "DATE",
+          "startdate": "DATE",
+          "enddate": "DATE",
+          "processinstanceid": "NUMBER",
+          "userid": "LABEL",
+          "duration": "NUMBER"
+        }
       }
     ]
 ---

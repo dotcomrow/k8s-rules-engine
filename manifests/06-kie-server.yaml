@@ -726,6 +726,7 @@ spec:
   template:
     metadata:
       annotations:
+        config.linkerd.io/proxy-shutdown-endpoint-enabled: "true"
         linkerd.io/inject: enabled
     spec:
       shareProcessNamespace: true

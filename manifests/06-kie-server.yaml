@@ -726,6 +726,7 @@ spec:
   template:
     metadata:
       annotations:
+        config.linkerd.io/proxy-env: "LINKERD2_PROXY_SHUTDOWN_ENDPOINT_ENABLED=true"
         config.linkerd.io/proxy-shutdown-endpoint-enabled: "true"
         linkerd.io/inject: enabled
     spec:

@@ -767,7 +767,7 @@ spec:
             - { name: vault-secrets, mountPath: /vault-secrets }
       containers:
         - name: register-queries
-          image: alpine:3.20
+          image: curlimages/curl:8.12.1
           command: ["/bin/sh","-c"]
           args:
             - |
@@ -778,7 +778,6 @@ spec:
                 killall -s TERM linkerd2-proxy >/dev/null 2>&1 || true
               }
               trap cleanup_proxy EXIT
-              apk add --no-cache curl >/dev/null
               if [ ! -f /vault-secrets/kie-users-env.sh ]; then
                 echo "ERROR: KIE credentials not found"
                 exit 1

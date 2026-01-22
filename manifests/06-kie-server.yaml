@@ -277,7 +277,7 @@ spec:
           args:
             - |
               set -euo pipefail
-              cp -a /opt/jboss/wildfly/standalone/deployments/kie-server.war/WEB-INF/classes/. /target/
+              cp -R /opt/jboss/wildfly/standalone/deployments/kie-server.war/WEB-INF/classes/. /target/
               mkdir -p /target/jpa/META-INF /target/META-INF
               cp /override/persistence.xml /target/jpa/META-INF/persistence.xml
               cp /override/query-definition-override.orm.xml /target/META-INF/QueryDefinitionOverride.orm.xml
@@ -502,7 +502,7 @@ spec:
           args:
             - |
               set -euo pipefail
-              cp -a /opt/jboss/wildfly/standalone/deployments/kie-server.war/WEB-INF/classes/. /target/
+              cp -R /opt/jboss/wildfly/standalone/deployments/kie-server.war/WEB-INF/classes/. /target/
               mkdir -p /target/jpa/META-INF /target/META-INF
               cp /override/persistence.xml /target/jpa/META-INF/persistence.xml
               cp /override/query-definition-override.orm.xml /target/META-INF/QueryDefinitionOverride.orm.xml

@@ -29,6 +29,8 @@ spec:
           namespace: k8s-api-gateway
         - name: drools-workbench
           namespace: drools
+        - name: drools-kie-server
+          namespace: drools
         - name: kie-server-openapi
           namespace: drools
 ---
@@ -59,4 +61,3 @@ spec:
           namespace: k8s-api-gateway
         - name: kogito-decision-openapi
           namespace: drools
-

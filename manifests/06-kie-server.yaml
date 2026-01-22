@@ -773,23 +773,31 @@ spec:
             - |
               set -euo pipefail
               cleanup_proxy() {
-                kill_linkerd_procs() {
-                  for comm in /proc/[0-9]*/comm; do
-                    name="$(cat "$comm" 2>/dev/null || true)"
-                    case "$name" in
-                      linkerd-proxy|linkerd2-proxy)
-                        pid="${comm#/proc/}"
-                        pid="${pid%/comm}"
-                        kill -TERM "$pid" >/dev/null 2>&1 || true
-                        ;;
-                    esac
-                  done
-                }
-                for _ in 1 2 3; do
-                  curl -fsS -X POST http://127.0.0.1:4191/shutdown >/dev/null 2>&1 || true
-                  kill_linkerd_procs
-                  sleep 1
+                admin_url="http://127.0.0.1:4191"
+                linkerd_pid=""
+                for comm in /proc/[0-9]*/comm; do
+                  name="$(cat "$comm" 2>/dev/null || true)"
+                  case "$name" in
+                    linkerd-proxy|linkerd2-proxy)
+                      linkerd_pid="${comm#/proc/}"
+                      linkerd_pid="${linkerd_pid%/comm}"
+                      break
+                      ;;
+                  esac
                 done
+                code="$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 -X POST "${admin_url}/shutdown" || true)"
+                if [ -n "${code:-}" ] && [ "$code" != "200" ] && [ "$code" != "202" ] && [ "$code" != "000" ]; then
+                  echo "WARN: linkerd shutdown returned HTTP ${code}"
+                fi
+                if [ -n "${linkerd_pid}" ]; then
+                  for _ in $(seq 1 20); do
+                    if [ ! -e "/proc/${linkerd_pid}" ]; then
+                      return 0
+                    fi
+                    sleep 1
+                  done
+                  echo "WARN: linkerd-proxy still running after shutdown"
+                fi
               }
               trap cleanup_proxy EXIT
               if [ ! -f /vault-secrets/kie-users-env.sh ]; then
@@ -904,6 +912,8 @@ spec:
                 done
               done
               echo "All default queries registered on all KIE server pods"
+              cleanup_proxy
+              sleep 2
           volumeMounts:
             - { name: vault-secrets, mountPath: /vault-secrets }
             - { name: default-queries, mountPath: /queries }

@@ -556,6 +556,8 @@ metadata:
   name: kie-server-register-default-queries
   namespace: drools
   annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
     argocd.argoproj.io/sync-options: Replace=true,Force=true
     argocd.argoproj.io/sync-wave: "6"
 spec:
@@ -640,6 +642,10 @@ spec:
 
               jq -c '.[]' /queries/queries.json | while read -r item; do
                 name=$(printf '%s' "$item" | jq -r '."query-name"')
+                del_http=$(curl -s -o /dev/null -w "%{http_code}" -u "$KIE_SERVER_USER:$KIE_SERVER_PWD" \
+                  -H "Content-Type: application/json" \
+                  -X DELETE "$KIE_SERVER_BASE/queries/definitions/$name" || true)
+                echo "Deleted $name (HTTP $del_http)"
                 http=$(curl -s -o /dev/null -w "%{http_code}" -u "$KIE_SERVER_USER:$KIE_SERVER_PWD" \
                   -H "Content-Type: application/json" \
                   -X PUT "$KIE_SERVER_BASE/queries/definitions/$name" \

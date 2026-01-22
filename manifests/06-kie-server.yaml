@@ -466,9 +466,8 @@ spec:
                 echo "export KIE_SERVER_DB_URL=\"$DB_URL\""
               } > /vault-secrets/db-env.sh
 
-              KIE_USER_JSON="$(vault kv get -format=json secret/drools/kie-user 2>/dev/null || true)"
-              KIE_USER="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.username // empty')"
-              KIE_PASS="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.password // empty')"
+              KIE_USER="$(vault kv get -field=username secret/drools/kie-user 2>/dev/null || true)"
+              KIE_PASS="$(vault kv get -field=password secret/drools/kie-user 2>/dev/null || true)"
               if [ -z "${KIE_USER:-}" ] || [ -z "${KIE_PASS:-}" ]; then
                 echo "ERROR: Missing drools kie-user creds in Vault"
                 exit 1

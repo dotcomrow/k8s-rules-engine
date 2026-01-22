@@ -130,6 +130,84 @@ data:
       </entity>
     </entity-mappings>
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kie-server-default-queries
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+data:
+  queries.json: |
+    [
+      {
+        "query-name": "jbpmExecutionErrorList",
+        "query-source": "${org.kie.server.persistence.ds}",
+        "query-expression": "select eri.ERROR_ACK, eri.ERROR_ACK_BY, eri.ERROR_ACK_AT, eri.ACTIVITY_ID, eri.ACTIVITY_NAME, eri.DEPLOYMENT_ID, eri.ERROR_DATE, eri.ERROR_ID, eri.ERROR_MSG, eri.JOB_ID, eri.PROCESS_ID, eri.PROCESS_INST_ID, eri.ERROR_TYPE from ExecutionErrorInfo eri",
+        "query-target": "CUSTOM"
+      },
+      {
+        "query-name": "jbpmHumanTasks",
+        "query-source": "${org.kie.server.persistence.ds}",
+        "query-expression": "select t.activationTime, t.actualOwner, t.createdBy, t.createdOn, t.deploymentId, t.description, t.dueDate, t.name, t.parentId, t.priority, t.processId, t.processInstanceId, t.processSessionId, t.status, t.taskId, t.workItemId, t.lastModificationDate, pil.correlationKey, pil.processInstanceDescription, nil.sla_due_date, nil.slaCompliance from AuditTaskImpl t left join ProcessInstanceLog pil on pil.processInstanceId=t.processInstanceId left join NodeInstanceLog nil on nil.workItemId=t.workItemId",
+        "query-target": "CUSTOM"
+      },
+      {
+        "query-name": "jbpmHumanTasksWithAdmin",
+        "query-source": "${org.kie.server.persistence.ds}",
+        "query-expression": "select t.activationTime, t.actualOwner, t.createdBy, t.createdOn, t.deploymentId, t.description, t.dueDate, t.name, t.parentId, t.priority, t.processId, t.processInstanceId, t.processSessionId, t.status, t.taskId, t.workItemId, t.lastModificationDate, pil.correlationKey, pil.processInstanceDescription ,oe.id, nil.sla_due_date, nil.slaCompliance, (select COUNT(errInfo.id) from ExecutionErrorInfo errInfo where errInfo.ACTIVITY_ID = t.taskId and errInfo.PROCESS_INST_ID = pil.processInstanceId and errInfo.ERROR_ACK = 0 and errInfo.ERROR_TYPE = 'Task') as errorCount from AuditTaskImpl t  left join ProcessInstanceLog pil on pil.processInstanceId = t.processInstanceId left join PeopleAssignments_BAs ba on t.taskId = ba.task_id left join OrganizationalEntity oe on ba.entity_id = oe.id left join NodeInstanceLog nil on nil.workItemId=t.workItemId",
+        "query-target": "FILTERED_BA_TASK"
+      },
+      {
+        "query-name": "jbpmHumanTasksWithUser",
+        "query-source": "${org.kie.server.persistence.ds}",
+        "query-expression": "select t.activationTime, t.actualOwner, t.createdBy, t.createdOn, t.deploymentId, t.description, t.dueDate, t.name, t.parentId, t.priority, t.processId, t.processInstanceId, t.processSessionId, t.status, t.taskId, t.workItemId, t.lastModificationDate, pil.correlationKey, pil.processInstanceDescription , oe.id, eo.entity_id, nil.sla_due_date, nil.slaCompliance from AuditTaskImpl t left join PeopleAssignments_PotOwners po on t.taskId=po.task_id left join OrganizationalEntity oe on po.entity_id=oe.id left join ProcessInstanceLog pil on pil.processInstanceId=t.processInstanceId left join PeopleAssignments_ExclOwners eo on t.taskId=eo.task_id left join NodeInstanceLog nil on nil.workItemId=t.workItemId",
+        "query-target": "FILTERED_PO_TASK"
+      },
+      {
+        "query-name": "jbpmHumanTasksWithVariables",
+        "query-source": "${org.kie.server.persistence.ds}",
+        "query-expression": "select tvi.taskId, tvi.name, tvi.value from TaskVariableImpl tvi",
+        "query-target": "CUSTOM"
+      },
+      {
+        "query-name": "jbpmProcessInstanceLogs",
+        "query-source": "${org.kie.server.persistence.ds}",
+        "query-expression": "select log.id, log.nodeId, log.nodeName, log.nodeType, log.externalId, log.processInstanceId, log.log_date, log.connection, log.type, log.workItemId, log.referenceId, log.nodeContainerId, log.sla_due_date, log.slaCompliance from NodeInstanceLog log ",
+        "query-target": "CUSTOM"
+      },
+      {
+        "query-name": "jbpmProcessInstances",
+        "query-source": "${org.kie.server.persistence.ds}",
+        "query-expression": "SELECT LOG.PROCESSINSTANCEID, LOG.PROCESSID, LOG.START_DATE, LOG.END_DATE, LOG.STATUS, LOG.PARENTPROCESSINSTANCEID, LOG.OUTCOME, LOG.DURATION, LOG.USER_IDENTITY, LOG.PROCESSVERSION, LOG.PROCESSNAME, LOG.CORRELATIONKEY, LOG.EXTERNALID, LOG.PROCESSINSTANCEDESCRIPTION, LOG.SLA_DUE_DATE, LOG.SLACOMPLIANCE, COALESCE ( INFO.LASTMODIFICATIONDATE, LOG.END_DATE ) AS LASTMODIFICATIONDATE, COUNT( ERRINFO.ID ) ERRORCOUNT FROM ProcessInstanceLog LOG LEFT JOIN ExecutionErrorInfo ERRINFO ON ERRINFO.PROCESS_INST_ID=LOG.PROCESSINSTANCEID AND ERRINFO.ERROR_ACK=0 LEFT JOIN ProcessInstanceInfo INFO ON INFO.INSTANCEID=LOG.PROCESSINSTANCEID GROUP BY LOG.PROCESSINSTANCEID, LOG.PROCESSID, LOG.START_DATE, LOG.END_DATE, LOG.STATUS, LOG.PARENTPROCESSINSTANCEID, LOG.OUTCOME, LOG.DURATION, LOG.USER_IDENTITY, LOG.PROCESSVERSION, LOG.PROCESSNAME, LOG.CORRELATIONKEY, LOG.EXTERNALID, LOG.PROCESSINSTANCEDESCRIPTION, LOG.SLA_DUE_DATE, LOG.SLACOMPLIANCE, COALESCE ( INFO.LASTMODIFICATIONDATE, LOG.END_DATE )",
+        "query-target": "CUSTOM"
+      },
+      {
+        "query-name": "jbpmProcessInstancesWithVariables",
+        "query-source": "${org.kie.server.persistence.ds}",
+        "query-expression": "select vil.processInstanceId, vil.processId, vil.id, vil.variableId, vil.value from VariableInstanceLog vil left join VariableInstanceLog vil2 on vil.processInstanceId = vil2.processInstanceId and vil.variableId = vil2.variableId and vil.id < vil2.id where vil2.id is null",
+        "query-target": "CUSTOM"
+      },
+      {
+        "query-name": "jbpmRequestList",
+        "query-source": "${org.kie.server.persistence.ds}",
+        "query-expression": "select ri.id, ri.timestamp, ri.status, ri.commandName, ri.message, ri.businessKey, ri.retries, ri.executions, pil.processName, pil.processInstanceId, pil.processInstanceDescription, ri.deploymentId from RequestInfo ri left join ProcessInstanceLog pil on pil.processInstanceId=ri.processInstanceId",
+        "query-target": "CUSTOM"
+      },
+      {
+        "query-name": "processesMonitoring",
+        "query-source": "${org.kie.server.persistence.ds}",
+        "query-expression": "select log.processInstanceId, log.processId, log.start_date, log.end_date, log.status, log.duration, log.user_identity, log.processVersion, log.processName, log.externalId from ProcessInstanceLog log",
+        "query-target": "CUSTOM"
+      },
+      {
+        "query-name": "tasksMonitoring",
+        "query-source": "${org.kie.server.persistence.ds}",
+        "query-expression": "select p.processName, p.externalId, t.taskId, t.taskName, t.status, t.createdDate, t.startDate, t.endDate, t.processInstanceId, t.userId, t.duration from ProcessInstanceLog p inner join BAMTaskSummary t on (t.processInstanceId = p.processInstanceId) inner join (select min(pk) as pk from BAMTaskSummary group by taskId) d on t.pk = d.pk",
+        "query-target": "CUSTOM"
+      }
+    ]
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -431,6 +509,104 @@ spec:
             - { name: wildfly-modules, mountPath: /opt/jboss/wildfly/modules }
             - { name: vault-secrets, mountPath: /vault-secrets }
             - { name: kie-server-classes, mountPath: /opt/jboss/wildfly/standalone/deployments/kie-server.war/WEB-INF/classes }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kie-server-register-default-queries
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: disabled
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: drools-kie-server
+      volumes:
+        - name: vault-secrets
+          emptyDir: {}
+        - name: default-queries
+          configMap:
+            name: kie-server-default-queries
+            items:
+              - { key: queries.json, path: queries.json, mode: 0444 }
+      initContainers:
+        - name: vault-kie-user
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+              apk add --no-cache jq curl >/dev/null
+              VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
+                role=drools \
+                jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token))
+              export VAULT_TOKEN
+
+              KIE_USER_JSON="$(vault kv get -format=json secret/drools/kie-user 2>/dev/null || true)"
+              KIE_USER="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.username // empty')"
+              KIE_PASS="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.password // empty')"
+              if [ -z "${KIE_USER:-}" ] || [ -z "${KIE_PASS:-}" ]; then
+                echo "ERROR: Missing drools kie-user creds in Vault"
+                exit 1
+              fi
+              {
+                echo "export KIE_SERVER_USER=\"$KIE_USER\""
+                echo "export KIE_SERVER_PWD=\"$KIE_PASS\""
+              } > /shared/kie-users-env.sh
+              echo "OK: KIE user creds ready"
+          volumeMounts:
+            - { name: vault-secrets, mountPath: /shared }
+      containers:
+        - name: register-queries
+          image: alpine:3.20
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+              apk add --no-cache curl jq >/dev/null
+              if [ ! -f /vault-secrets/kie-users-env.sh ]; then
+                echo "ERROR: KIE credentials not found"
+                exit 1
+              fi
+              # shellcheck disable=SC1091
+              . /vault-secrets/kie-users-env.sh
+              KIE_SERVER_BASE="http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server"
+              for i in $(seq 1 60); do
+                code=$(curl -s -o /dev/null -w "%{http_code}" -u "$KIE_SERVER_USER:$KIE_SERVER_PWD" "$KIE_SERVER_BASE")
+                if [ "$code" = "200" ]; then
+                  break
+                fi
+                echo "Waiting for KIE server... (HTTP $code)"
+                sleep 5
+              done
+              if [ "${code:-}" != "200" ]; then
+                echo "ERROR: KIE server not ready"
+                exit 1
+              fi
+
+              jq -c '.[]' /queries/queries.json | while read -r item; do
+                name=$(printf '%s' "$item" | jq -r '."query-name"')
+                http=$(curl -s -o /dev/null -w "%{http_code}" -u "$KIE_SERVER_USER:$KIE_SERVER_PWD" \
+                  -H "Content-Type: application/json" \
+                  -X PUT "$KIE_SERVER_BASE/queries/definitions/$name" \
+                  -d "$item")
+                if [ "$http" != "200" ] && [ "$http" != "201" ]; then
+                  echo "ERROR: Failed to register $name (HTTP $http)"
+                  exit 1
+                fi
+                echo "Registered $name (HTTP $http)"
+              done
+              echo "All default queries registered"
+          volumeMounts:
+            - { name: vault-secrets, mountPath: /vault-secrets }
+            - { name: default-queries, mountPath: /queries }
 ---
 apiVersion: apps/v1
 kind: Deployment

@@ -773,9 +773,23 @@ spec:
             - |
               set -euo pipefail
               cleanup_proxy() {
-                curl -fsS -X POST http://127.0.0.1:4191/shutdown >/dev/null 2>&1 || true
-                killall -s TERM linkerd-proxy >/dev/null 2>&1 || true
-                killall -s TERM linkerd2-proxy >/dev/null 2>&1 || true
+                kill_linkerd_procs() {
+                  for comm in /proc/[0-9]*/comm; do
+                    name="$(cat "$comm" 2>/dev/null || true)"
+                    case "$name" in
+                      linkerd-proxy|linkerd2-proxy)
+                        pid="${comm#/proc/}"
+                        pid="${pid%/comm}"
+                        kill -TERM "$pid" >/dev/null 2>&1 || true
+                        ;;
+                    esac
+                  done
+                }
+                for _ in 1 2 3; do
+                  curl -fsS -X POST http://127.0.0.1:4191/shutdown >/dev/null 2>&1 || true
+                  kill_linkerd_procs
+                  sleep 1
+                done
               }
               trap cleanup_proxy EXIT
               if [ ! -f /vault-secrets/kie-users-env.sh ]; then

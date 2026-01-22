@@ -7,6 +7,8 @@ kind: ConfigMap
 metadata:
   name: kie-server-jpa-overrides
   namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 data:
   persistence.xml: |
     <?xml version="1.0" encoding="UTF-8"?>
@@ -134,8 +136,8 @@ metadata:
   name: kie-server-schema-init
   namespace: drools
   annotations:
-    argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+    argocd.argoproj.io/sync-wave: "3"
 spec:
   backoffLimit: 1
   template:
@@ -438,6 +440,7 @@ metadata:
   labels: { app: kie-server }
   annotations:
     reloader.stakater.com/auto: "true"
+    argocd.argoproj.io/sync-wave: "4"
 spec:
   replicas: 2
   selector:

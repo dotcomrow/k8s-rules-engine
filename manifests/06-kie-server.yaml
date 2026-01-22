@@ -809,15 +809,15 @@ spec:
 
               parse_queries() {
                 awk '
-                  BEGIN { in=0; obj="" }
-                  /"query-name"[[:space:]]*:/ { in=1 }
+                  BEGIN { recording=0; obj="" }
+                  /"query-name"[[:space:]]*:/ { recording=1 }
                   {
-                    if (in) {
+                    if (recording) {
                       obj = obj $0 "\n"
                       if ($0 ~ /}[[:space:]]*,?[[:space:]]*$/) {
                         printf "%s\x1e", obj
                         obj = ""
-                        in = 0
+                        recording = 0
                       }
                     }
                   }

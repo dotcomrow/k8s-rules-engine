@@ -676,11 +676,11 @@ spec:
           env:
             - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0 -Dorg.drools.server.filter.classes=true -Dorg.kie.server.persistence.ds=java:jboss/datasources/KieServerDS -Dorg.kie.server.persistence.dialect=org.hibernate.dialect.PostgreSQLDialect -Dorg.jbpm.persistence.jpa.properties.hibernate.hbm2ddl.auto=create -Dorg.jbpm.persistence.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true -Dorg.jbpm.query.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true -Dhibernate.jdbc.lob.non_contextual_creation=true" }
             - { name: KIE_SERVER_EXTENSIONS, value: "BRM,DMN,BPM,CaseMgmt,Planner" }
-      volumeMounts:
-        - { name: kieserver-config, mountPath: /opt/jboss/wildfly/standalone/configuration }
-        - { name: wildfly-modules, mountPath: /opt/jboss/wildfly/modules }
-        - { name: vault-secrets, mountPath: /vault-secrets }
-        - { name: kie-server-classes, mountPath: /opt/jboss/wildfly/standalone/deployments/kie-server.war/WEB-INF/classes }
+          volumeMounts:
+            - { name: kieserver-config, mountPath: /opt/jboss/wildfly/standalone/configuration }
+            - { name: wildfly-modules, mountPath: /opt/jboss/wildfly/modules }
+            - { name: vault-secrets, mountPath: /vault-secrets }
+            - { name: kie-server-classes, mountPath: /opt/jboss/wildfly/standalone/deployments/kie-server.war/WEB-INF/classes }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

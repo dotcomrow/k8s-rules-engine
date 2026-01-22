@@ -36,8 +36,6 @@ spec:
               image: alpine/git:2.47.2
               command: ["/bin/sh","-c"]
               env:
-                - name: VAULT_ADDR
-                  value: "http://vault.vault.svc.cluster.local:8200"
                 - name: REPOS_ROOT
                   value: "/niogit/.niogit"
                 - name: SPACES
@@ -47,23 +45,14 @@ spec:
               args:
                 - |
                   set -euo pipefail
-                  apk add --no-cache curl jq ca-certificates >/dev/null
-
-                  SA_JWT="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
-                  LOGIN_PAYLOAD="$(printf '{"role":"drools","jwt":"%s"}' "$SA_JWT")"
-                  VAULT_TOKEN="$(curl -fsSL -H 'Content-Type: application/json' --data "$LOGIN_PAYLOAD" \
-                    "$VAULT_ADDR/v1/auth/kubernetes/login" | jq -r '.auth.client_token')"
-                  if [ -z "${VAULT_TOKEN:-}" ] || [ "$VAULT_TOKEN" = "null" ]; then
-                    echo "Vault login failed"
+                  if [ ! -f /shared/gh-env.sh ]; then
+                    echo "Missing GitHub credentials file"
                     exit 1
                   fi
-
-                  GH_USER="$(curl -fsSL -H "X-Vault-Token: $VAULT_TOKEN" \
-                    "$VAULT_ADDR/v1/secret/data/k8s-rules-engine-github-packages-username" | jq -r '.data.data.value // empty')"
-                  GH_TOKEN="$(curl -fsSL -H "X-Vault-Token: $VAULT_TOKEN" \
-                    "$VAULT_ADDR/v1/secret/data/k8s-rules-engine-github-packages-token" | jq -r '.data.data.value // empty')"
+                  # shellcheck disable=SC1091
+                  . /shared/gh-env.sh
                   if [ -z "${GH_USER:-}" ] || [ -z "${GH_TOKEN:-}" ]; then
-                    echo "Missing GitHub credentials in Vault"
+                    echo "Missing GitHub credentials values"
                     exit 1
                   fi
                   AUTH_HEADER="$(printf '%s:%s' "$GH_USER" "$GH_TOKEN" | base64 | tr -d '\n')"
@@ -120,7 +109,44 @@ spec:
                   exit "$fail"
               volumeMounts:
                 - { name: workbench-niogit, mountPath: /niogit }
+                - { name: vault-secrets, mountPath: /shared }
+          initContainers:
+            - name: vault-github-creds
+              image: hashicorp/vault:1.15.4
+              command: ["/bin/sh","-c"]
+              env:
+                - name: VAULT_ADDR
+                  value: "http://vault.vault.svc.cluster.local:8200"
+              args:
+                - |
+                  set -euo pipefail
+                  apk add --no-cache jq curl >/dev/null
+                  SA_JWT="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+                  LOGIN_PAYLOAD="$(printf '{"role":"drools","jwt":"%s"}' "$SA_JWT")"
+                  VAULT_TOKEN="$(curl -fsSL -H 'Content-Type: application/json' --data "$LOGIN_PAYLOAD" \
+                    "$VAULT_ADDR/v1/auth/kubernetes/login" | jq -r '.auth.client_token')"
+                  if [ -z "${VAULT_TOKEN:-}" ] || [ "$VAULT_TOKEN" = "null" ]; then
+                    echo "Vault login failed"
+                    exit 1
+                  fi
+                  GH_USER="$(curl -fsSL -H "X-Vault-Token: $VAULT_TOKEN" \
+                    "$VAULT_ADDR/v1/secret/data/k8s-rules-engine-github-packages-username" | jq -r '.data.data.value // empty')"
+                  GH_TOKEN="$(curl -fsSL -H "X-Vault-Token: $VAULT_TOKEN" \
+                    "$VAULT_ADDR/v1/secret/data/k8s-rules-engine-github-packages-token" | jq -r '.data.data.value // empty')"
+                  if [ -z "${GH_USER:-}" ] || [ -z "${GH_TOKEN:-}" ]; then
+                    echo "Missing GitHub credentials in Vault"
+                    exit 1
+                  fi
+                  {
+                    echo "export GH_USER=\"$GH_USER\""
+                    echo "export GH_TOKEN=\"$GH_TOKEN\""
+                  } > /shared/gh-env.sh
+                  chmod 0400 /shared/gh-env.sh
+              volumeMounts:
+                - { name: vault-secrets, mountPath: /shared }
           volumes:
             - name: workbench-niogit
               persistentVolumeClaim:
                 claimName: kie-workbench-niogit
+            - name: vault-secrets
+              emptyDir: {}

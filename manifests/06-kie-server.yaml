@@ -525,6 +525,7 @@ spec:
       annotations:
         linkerd.io/inject: enabled
     spec:
+      shareProcessNamespace: true
       restartPolicy: OnFailure
       serviceAccountName: drools-kie-server
       volumes:
@@ -604,6 +605,7 @@ spec:
                 echo "Registered $name (HTTP $http)"
               done
               echo "All default queries registered"
+              killall -s TERM linkerd-proxy >/dev/null 2>&1 || true
           volumeMounts:
             - { name: vault-secrets, mountPath: /vault-secrets }
             - { name: default-queries, mountPath: /queries }

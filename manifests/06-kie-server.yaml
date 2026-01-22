@@ -792,6 +792,9 @@ spec:
                   echo "WARN: linkerd shutdown returned HTTP ${code}"
                 fi
                 if [ -n "${linkerd_pid}" ]; then
+                  if [ "${code:-}" = "404" ]; then
+                    kill -TERM "${linkerd_pid}" >/dev/null 2>&1 || true
+                  fi
                   for _ in $(seq 1 20); do
                     if [ ! -e "/proc/${linkerd_pid}" ]; then
                       return 0

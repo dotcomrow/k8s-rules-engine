@@ -819,27 +819,38 @@ spec:
 
               parse_queries() {
                 awk '
-                  BEGIN { recording=0; obj="" }
+                  BEGIN { depth=0; inobj=0; obj="" }
                   {
                     line=$0
-                    stripped=line
-                    gsub(/[[:space:]]/, "", stripped)
-                    if (!recording && stripped == "{") {
-                      recording=1
-                      obj=line "\n"
-                      next
-                    }
-                    if (recording) {
-                      if (stripped == "}" || stripped == "},") {
-                        line=$0
-                        sub(/,[[:space:]]*$/, "", line)
-                        obj = obj line "\n"
-                        printf "%s\x1e", obj
-                        obj=""
-                        recording=0
+                    if (!inobj) {
+                      stripped=line
+                      gsub(/[[:space:]]/, "", stripped)
+                      if (stripped == "[" || stripped == "]" || stripped == "") {
                         next
                       }
+                    }
+                    for (i = 1; i <= length(line); i++) {
+                      ch = substr(line, i, 1)
+                      if (ch == "{") {
+                        if (depth == 0) {
+                          inobj = 1
+                          obj = ""
+                        }
+                        depth++
+                      } else if (ch == "}") {
+                        depth--
+                      }
+                    }
+                    if (inobj) {
+                      if (depth == 0) {
+                        sub(/,[[:space:]]*$/, "", line)
+                      }
                       obj = obj line "\n"
+                      if (depth == 0) {
+                        printf "%s\x1e", obj
+                        obj=""
+                        inobj=0
+                      }
                     }
                   }
                 ' /queries/queries.json
@@ -867,7 +878,22 @@ spec:
                     -X PUT "$KIE_SERVER_BASE/queries/definitions/$name" \
                     -d "$item")
                   if [ "$http" != "200" ] && [ "$http" != "201" ]; then
+                    payload_file="/tmp/query-${name}.json"
+                    resp_headers="/tmp/query-${name}-headers.txt"
+                    resp_body="/tmp/query-${name}-body.txt"
+                    printf "%s\n" "$item" > "$payload_file"
+                    http=$(curl -s -w "%{http_code}" -o "$resp_body" -D "$resp_headers" -u "$KIE_SERVER_USER:$KIE_SERVER_PWD" \
+                      -H "Content-Type: application/json" \
+                      -H "X-KIE-ContentType: JSON" \
+                      -X PUT "$KIE_SERVER_BASE/queries/definitions/$name" \
+                      -d "$item")
                     echo "ERROR: Failed to register $name on ${host} (HTTP $http)"
+                    echo "--- payload $payload_file ---"
+                    cat "$payload_file" || true
+                    echo "--- response headers $resp_headers ---"
+                    cat "$resp_headers" || true
+                    echo "--- response body $resp_body ---"
+                    cat "$resp_body" || true
                     exit 1
                   fi
                   echo "Registered $name on ${host} (HTTP $http)"

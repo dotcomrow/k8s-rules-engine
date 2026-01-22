@@ -679,11 +679,40 @@ spec:
           env:
             - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0 -Dorg.drools.server.filter.classes=true -Dorg.kie.server.persistence.ds=java:jboss/datasources/KieServerDS -Dorg.kie.server.persistence.dialect=org.hibernate.dialect.PostgreSQLDialect -Dorg.jbpm.persistence.jpa.properties.hibernate.hbm2ddl.auto=create -Dorg.jbpm.persistence.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true -Dorg.jbpm.query.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true -Dhibernate.jdbc.lob.non_contextual_creation=true" }
             - { name: KIE_SERVER_EXTENSIONS, value: "BRM,DMN,BPM,CaseMgmt,Planner" }
-          volumeMounts:
-            - { name: kieserver-config, mountPath: /opt/jboss/wildfly/standalone/configuration }
-            - { name: wildfly-modules, mountPath: /opt/jboss/wildfly/modules }
-            - { name: vault-secrets, mountPath: /vault-secrets }
-            - { name: kie-server-classes, mountPath: /opt/jboss/wildfly/standalone/deployments/kie-server.war/WEB-INF/classes }
+      volumeMounts:
+        - { name: kieserver-config, mountPath: /opt/jboss/wildfly/standalone/configuration }
+        - { name: wildfly-modules, mountPath: /opt/jboss/wildfly/modules }
+        - { name: vault-secrets, mountPath: /vault-secrets }
+        - { name: kie-server-classes, mountPath: /opt/jboss/wildfly/standalone/deployments/kie-server.war/WEB-INF/classes }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kie-server-register-queries
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+rules:
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    resourceNames: ["kie-server"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kie-server-register-queries
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+subjects:
+  - kind: ServiceAccount
+    name: drools-kie-server
+    namespace: drools
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kie-server-register-queries
 ---
 apiVersion: batch/v1
 kind: Job
@@ -761,37 +790,54 @@ spec:
               fi
               # shellcheck disable=SC1091
               . /vault-secrets/kie-users-env.sh
-              KIE_SERVER_BASE="http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server"
+              K8S_API="https://kubernetes.default.svc"
+              SA_TOKEN="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+              CA_CERT="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+              KIE_HOSTS=""
               for i in $(seq 1 60); do
-                code=$(curl -s -o /dev/null -w "%{http_code}" -u "$KIE_SERVER_USER:$KIE_SERVER_PWD" "$KIE_SERVER_BASE")
-                if [ "$code" = "200" ]; then
+                ENDPOINTS_JSON="$(curl -fsS --cacert "$CA_CERT" -H "Authorization: Bearer $SA_TOKEN" \
+                  "$K8S_API/api/v1/namespaces/drools/endpoints/kie-server" || true)"
+                KIE_HOSTS="$(printf '%s' "$ENDPOINTS_JSON" | jq -r '.subsets[].addresses[].ip' 2>/dev/null | sort -u)"
+                if [ -n "${KIE_HOSTS:-}" ]; then
                   break
                 fi
-                echo "Waiting for KIE server... (HTTP $code)"
+                echo "Waiting for KIE server endpoints..."
                 sleep 5
               done
-              if [ "${code:-}" != "200" ]; then
-                echo "ERROR: KIE server not ready"
+              if [ -z "${KIE_HOSTS:-}" ]; then
+                echo "ERROR: No KIE server endpoints found"
                 exit 1
               fi
 
               jq -c '.[]' /queries/queries.json | while read -r item; do
                 name=$(printf '%s' "$item" | jq -r '."query-name"')
-                del_http=$(curl -s -o /dev/null -w "%{http_code}" -u "$KIE_SERVER_USER:$KIE_SERVER_PWD" \
-                  -H "Content-Type: application/json" \
-                  -X DELETE "$KIE_SERVER_BASE/queries/definitions/$name" || true)
-                echo "Deleted $name (HTTP $del_http)"
-                http=$(curl -s -o /dev/null -w "%{http_code}" -u "$KIE_SERVER_USER:$KIE_SERVER_PWD" \
-                  -H "Content-Type: application/json" \
-                  -X PUT "$KIE_SERVER_BASE/queries/definitions/$name" \
-                  -d "$item")
-                if [ "$http" != "200" ] && [ "$http" != "201" ]; then
-                  echo "ERROR: Failed to register $name (HTTP $http)"
-                  exit 1
-                fi
-                echo "Registered $name (HTTP $http)"
+                for host in $KIE_HOSTS; do
+                  KIE_SERVER_BASE="http://${host}:8080/kie-server/services/rest/server"
+                  for i in $(seq 1 60); do
+                    code=$(curl -s -o /dev/null -w "%{http_code}" -u "$KIE_SERVER_USER:$KIE_SERVER_PWD" "$KIE_SERVER_BASE")
+                    if [ "$code" = "200" ]; then
+                      break
+                    fi
+                    echo "Waiting for KIE server ${host}... (HTTP $code)"
+                    sleep 5
+                  done
+                  if [ "${code:-}" != "200" ]; then
+                    echo "ERROR: KIE server ${host} not ready"
+                    exit 1
+                  fi
+                  http=$(curl -s -o /dev/null -w "%{http_code}" -u "$KIE_SERVER_USER:$KIE_SERVER_PWD" \
+                    -H "Content-Type: application/json" \
+                    -H "X-KIE-ContentType: JSON" \
+                    -X PUT "$KIE_SERVER_BASE/queries/definitions/$name" \
+                    -d "$item")
+                  if [ "$http" != "200" ] && [ "$http" != "201" ]; then
+                    echo "ERROR: Failed to register $name on ${host} (HTTP $http)"
+                    exit 1
+                  fi
+                  echo "Registered $name on ${host} (HTTP $http)"
+                done
               done
-              echo "All default queries registered"
+              echo "All default queries registered on all KIE server pods"
           volumeMounts:
             - { name: vault-secrets, mountPath: /vault-secrets }
             - { name: default-queries, mountPath: /queries }

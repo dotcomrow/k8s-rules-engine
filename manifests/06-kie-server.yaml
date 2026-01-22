@@ -794,7 +794,7 @@ spec:
                   "$K8S_API/api/v1/namespaces/drools/endpoints/kie-server" || true)"
                 if [ -n "$ENDPOINTS_JSON" ]; then
                   KIE_HOSTS="$(printf '%s' "$ENDPOINTS_JSON" \
-                    | sed -n 's/.*"ip"[[:space:]]*:[[:space:]]*"\\([^"]\\+\\)".*/\\1/p' \
+                    | sed -E -n 's/.*"ip"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' \
                     | sort -u)"
                 fi
                 if [ -n "${KIE_HOSTS:-}" ]; then
@@ -826,7 +826,7 @@ spec:
               }
 
               parse_queries | while IFS= read -r -d $'\x1e' item; do
-                name=$(printf '%s' "$item" | sed -n 's/.*"query-name"[[:space:]]*:[[:space:]]*"\\([^"]\\+\\)".*/\\1/p')
+                name=$(printf '%s' "$item" | sed -E -n 's/.*"query-name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')
                 for host in $KIE_HOSTS; do
                   KIE_SERVER_BASE="http://${host}:8080/kie-server/services/rest/server"
                   for i in $(seq 1 60); do

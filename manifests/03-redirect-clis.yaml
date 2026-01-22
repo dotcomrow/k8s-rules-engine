@@ -50,7 +50,7 @@ data:
     /subsystem=undertow/server=default-server/host=default-host/filter-ref=redirect-root:add
     /subsystem=undertow/server=default-server/host=default-host/filter-ref=deny-basic-noncontroller:add
     /subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=proxy-address-forwarding,value=true)
-    /subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=max-entity-size,value=52428800)
+    /subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=max-post-size,value=52428800)
     /subsystem=undertow/server=default-server/host=default-host:write-attribute(name=default-response-code,value=404)
     run-batch
     stop-embedded-server

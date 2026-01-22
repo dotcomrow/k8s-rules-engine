@@ -809,15 +809,27 @@ spec:
 
               parse_queries() {
                 awk '
-                  BEGIN { recording=0; obj="" }
-                  /"query-name"[[:space:]]*:/ { recording=1 }
+                  BEGIN { depth=0; obj="" }
                   {
-                    if (recording) {
-                      obj = obj $0 "\n"
-                      if ($0 ~ /}[[:space:]]*,?[[:space:]]*$/) {
+                    line = $0
+                    # Skip array brackets.
+                    if (line ~ /^[[:space:]]*\\[/ || line ~ /^[[:space:]]*\\]/) {
+                      next
+                    }
+                    # Track brace depth (assumes no braces inside strings).
+                    for (i = 1; i <= length(line); i++) {
+                      ch = substr(line, i, 1)
+                      if (ch == "{") depth++
+                      else if (ch == "}") depth--
+                    }
+                    if (depth > 0 || line ~ /{/) {
+                      if (depth == 0) {
+                        sub(/,[[:space:]]*$/, "", line)
+                      }
+                      obj = obj line "\n"
+                      if (depth == 0) {
                         printf "%s\x1e", obj
                         obj = ""
-                        recording = 0
                       }
                     }
                   }

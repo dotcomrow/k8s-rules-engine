@@ -770,6 +770,10 @@ spec:
       containers:
         - name: register-queries
           image: curlimages/curl:8.12.1
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
           command: ["/bin/sh","-c"]
           args:
             - |

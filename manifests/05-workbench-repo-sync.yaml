@@ -120,19 +120,15 @@ spec:
               args:
                 - |
                   set -euo pipefail
-                  apk add --no-cache jq curl >/dev/null
                   SA_JWT="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
-                  LOGIN_PAYLOAD="$(printf '{"role":"drools","jwt":"%s"}' "$SA_JWT")"
-                  VAULT_TOKEN="$(curl -fsSL -H 'Content-Type: application/json' --data "$LOGIN_PAYLOAD" \
-                    "$VAULT_ADDR/v1/auth/kubernetes/login" | jq -r '.auth.client_token')"
+                  VAULT_TOKEN="$(vault write -field=token auth/kubernetes/login role=drools jwt="$SA_JWT")"
                   if [ -z "${VAULT_TOKEN:-}" ] || [ "$VAULT_TOKEN" = "null" ]; then
                     echo "Vault login failed"
                     exit 1
                   fi
-                  GH_USER="$(curl -fsSL -H "X-Vault-Token: $VAULT_TOKEN" \
-                    "$VAULT_ADDR/v1/secret/data/k8s-rules-engine-github-packages-username" | jq -r '.data.data.value // empty')"
-                  GH_TOKEN="$(curl -fsSL -H "X-Vault-Token: $VAULT_TOKEN" \
-                    "$VAULT_ADDR/v1/secret/data/k8s-rules-engine-github-packages-token" | jq -r '.data.data.value // empty')"
+                  export VAULT_TOKEN
+                  GH_USER="$(vault kv get -field=value secret/k8s-rules-engine-github-packages-username 2>/dev/null || true)"
+                  GH_TOKEN="$(vault kv get -field=value secret/k8s-rules-engine-github-packages-token 2>/dev/null || true)"
                   if [ -z "${GH_USER:-}" ] || [ -z "${GH_TOKEN:-}" ]; then
                     echo "Missing GitHub credentials in Vault"
                     exit 1

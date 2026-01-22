@@ -571,6 +571,12 @@ spec:
           args:
             - |
               set -euo pipefail
+              cleanup_proxy() {
+                curl -fsS -X POST http://127.0.0.1:4191/shutdown >/dev/null 2>&1 || true
+                killall -s TERM linkerd-proxy >/dev/null 2>&1 || true
+                killall -s TERM linkerd2-proxy >/dev/null 2>&1 || true
+              }
+              trap cleanup_proxy EXIT
               apk add --no-cache curl jq >/dev/null
               if [ ! -f /vault-secrets/kie-users-env.sh ]; then
                 echo "ERROR: KIE credentials not found"
@@ -605,7 +611,6 @@ spec:
                 echo "Registered $name (HTTP $http)"
               done
               echo "All default queries registered"
-              killall -s TERM linkerd-proxy >/dev/null 2>&1 || true
           volumeMounts:
             - { name: vault-secrets, mountPath: /vault-secrets }
             - { name: default-queries, mountPath: /queries }

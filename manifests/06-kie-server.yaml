@@ -794,7 +794,7 @@ spec:
                   "$K8S_API/api/v1/namespaces/drools/endpoints/kie-server" || true)"
                 if [ -n "$ENDPOINTS_JSON" ]; then
                   KIE_HOSTS="$(printf '%s' "$ENDPOINTS_JSON" \
-                    | sed -n 's/.*"ip":"\\([^"]\\+\\)".*/\\1/p' \
+                    | sed -n 's/.*"ip"[[:space:]]*:[[:space:]]*"\\([^"]\\+\\)".*/\\1/p' \
                     | sort -u)"
                 fi
                 if [ -n "${KIE_HOSTS:-}" ]; then

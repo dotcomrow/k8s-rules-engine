@@ -820,22 +820,27 @@ spec:
               parse_queries() {
                 awk '
                   BEGIN { recording=0; obj="" }
-                  /^[[:space:]]*{[[:space:]]*$/ {
-                    recording=1
-                    obj=$0 "\n"
-                    next
-                  }
-                  recording {
-                    if ($0 ~ /^[[:space:]]*}[[:space:]]*,?[[:space:]]*$/) {
-                      line=$0
-                      sub(/,[[:space:]]*$/, "", line)
-                      obj = obj line "\n"
-                      printf "%s\x1e", obj
-                      obj=""
-                      recording=0
+                  {
+                    line=$0
+                    stripped=line
+                    gsub(/[[:space:]]/, "", stripped)
+                    if (!recording && stripped == "{") {
+                      recording=1
+                      obj=line "\n"
                       next
                     }
-                    obj = obj $0 "\n"
+                    if (recording) {
+                      if (stripped == "}" || stripped == "},") {
+                        line=$0
+                        sub(/,[[:space:]]*$/, "", line)
+                        obj = obj line "\n"
+                        printf "%s\x1e", obj
+                        obj=""
+                        recording=0
+                        next
+                      }
+                      obj = obj line "\n"
+                    }
                   }
                 ' /queries/queries.json
               }

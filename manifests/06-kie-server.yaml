@@ -1080,6 +1080,50 @@ spec:
                 echo "❌ Missing GitHub Packages credentials in Vault"
                 exit 1
               fi
+              K8S_API="https://kubernetes.default.svc"
+              SA_TOKEN="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+              CA_CERT="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+              EXTRA_REPOS="$(curl -fsS --cacert "$CA_CERT" -H "Authorization: Bearer $SA_TOKEN" \
+                "$K8S_API/api/v1/namespaces/drools/configmaps?labelSelector=rules.dotcomrow/maven-repo%3Dtrue" \
+                | jq -r '.items[]? | select(.data["repo-id"] and .data["repo-url"]) | "\(.data["repo-id"])|\(.data["repo-url"])"' \
+                | sort -u || true)"
+              EXTRA_REPO_SERVERS=""
+              EXTRA_REPO_BLOCKS=""
+              EXTRA_PLUGIN_REPO_BLOCKS=""
+              if [ -n "${EXTRA_REPOS:-}" ]; then
+                IFS='
+'
+                for entry in $EXTRA_REPOS; do
+                  repo_id="${entry%%|*}"
+                  repo_url="${entry#*|}"
+                  case "$repo_id" in
+                    github|central|guvnor-m2-repo|kie-server)
+                      continue
+                      ;;
+                  esac
+                  EXTRA_REPO_SERVERS="${EXTRA_REPO_SERVERS}
+                  <server>
+                    <id>${repo_id}</id>
+                    <username>${GH_USER}</username>
+                    <password>${GH_TOKEN}</password>
+                  </server>"
+                  EXTRA_REPO_BLOCKS="${EXTRA_REPO_BLOCKS}
+                      <repository>
+                        <id>${repo_id}</id>
+                        <url>${repo_url}</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </repository>"
+                  EXTRA_PLUGIN_REPO_BLOCKS="${EXTRA_PLUGIN_REPO_BLOCKS}
+                      <pluginRepository>
+                        <id>${repo_id}</id>
+                        <url>${repo_url}</url>
+                        <releases><enabled>true</enabled></releases>
+                        <snapshots><enabled>true</enabled></snapshots>
+                      </pluginRepository>"
+                done
+                unset IFS
+              fi
               mkdir -p /kie-m2
               cat > /kie-m2/settings.xml <<EOF
               <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
@@ -1088,11 +1132,6 @@ spec:
                 <servers>
                   <server>
                     <id>github</id>
-                    <username>${GH_USER}</username>
-                    <password>${GH_TOKEN}</password>
-                  </server>
-                  <server>
-                    <id>tool-use-policy</id>
                     <username>${GH_USER}</username>
                     <password>${GH_TOKEN}</password>
                   </server>
@@ -1106,6 +1145,7 @@ spec:
                     <username>${GH_USER}</username>
                     <password>${GH_TOKEN}</password>
                   </server>
+                  ${EXTRA_REPO_SERVERS}
                 </servers>
                 <profiles>
                   <profile>
@@ -1117,12 +1157,7 @@ spec:
                         <releases><enabled>true</enabled></releases>
                         <snapshots><enabled>true</enabled></snapshots>
                       </repository>
-                      <repository>
-                        <id>tool-use-policy</id>
-                        <url>https://maven.pkg.github.com/dotcomrow/drools-rule-app-tool-use-policy</url>
-                        <releases><enabled>true</enabled></releases>
-                        <snapshots><enabled>true</enabled></snapshots>
-                      </repository>
+                      ${EXTRA_REPO_BLOCKS}
                       <repository>
                         <id>central</id>
                         <url>https://repo1.maven.org/maven2/</url>
@@ -1137,12 +1172,7 @@ spec:
                         <releases><enabled>true</enabled></releases>
                         <snapshots><enabled>true</enabled></snapshots>
                       </pluginRepository>
-                      <pluginRepository>
-                        <id>tool-use-policy</id>
-                        <url>https://maven.pkg.github.com/dotcomrow/drools-rule-app-tool-use-policy</url>
-                        <releases><enabled>true</enabled></releases>
-                        <snapshots><enabled>true</enabled></snapshots>
-                      </pluginRepository>
+                      ${EXTRA_PLUGIN_REPO_BLOCKS}
                       <pluginRepository>
                         <id>central</id>
                         <url>https://repo1.maven.org/maven2/</url>

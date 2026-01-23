@@ -1091,8 +1091,7 @@ spec:
               EXTRA_REPO_BLOCKS=""
               EXTRA_PLUGIN_REPO_BLOCKS=""
               if [ -n "${EXTRA_REPOS:-}" ]; then
-                IFS='
-'
+                IFS=$'\n'
                 for entry in $EXTRA_REPOS; do
                   repo_id="${entry%%|*}"
                   repo_url="${entry#*|}"

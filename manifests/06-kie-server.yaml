@@ -1405,6 +1405,7 @@ spec:
             - { name: KIE_SERVER_CONTROLLER, value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller" }
             - { name: KIE_MAVEN_REPO,     value: "/opt/jboss/.m2/repository" }
             - { name: KIE_SERVER_EXTENSIONS, value: "BRM,DMN,BPM,CaseMgmt,Planner" }
+            - { name: JAEGER_DISABLED, value: "true" }
           volumeMounts:
             - { name: kieserver-config,  mountPath: /opt/jboss/wildfly/standalone/configuration }
             - { name: welcome-content,   mountPath: /opt/jboss/wildfly/welcome-content }

@@ -739,6 +739,8 @@ spec:
               value: "/business-central"
             - name: KEYCLOAK_REDIRECT_PATH_KIE_SERVER
               value: "/business-central/rest/controller/server/kie-server"
+            - name: JAEGER_DISABLED
+              value: "true"
           volumeMounts:
             - { name: workbench-config,  mountPath: /opt/jboss/wildfly/standalone/configuration }
             - { name: welcome-content,   mountPath: /opt/jboss/wildfly/welcome-content }

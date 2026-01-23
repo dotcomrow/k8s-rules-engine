@@ -201,6 +201,7 @@ spec:
             - { name: KIE_SERVER_CONTROLLER_PWD,  value: "admin" }
             - { name: KIE_SERVER_HOST, value: "0.0.0.0" }
             - { name: KIE_SERVER_PORT, value: "8080" }
+            - { name: JAEGER_DISABLED, value: "true" }
           readinessProbe:
             tcpSocket: { port: 8080 }
             initialDelaySeconds: 120

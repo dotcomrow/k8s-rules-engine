@@ -4,8 +4,9 @@ metadata:
   name: workbench-dashbuilder-datasets-seed
   namespace: drools
   annotations:
-    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook: PreSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   backoffLimit: 1
   template:
@@ -19,13 +20,6 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
-      affinity:
-        podAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchLabels:
-                  app: kie-workbench
-              topologyKey: kubernetes.io/hostname
       containers:
         - name: seed-datasets
           image: alpine/git:2.47.2

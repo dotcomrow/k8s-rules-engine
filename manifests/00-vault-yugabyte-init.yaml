@@ -112,12 +112,12 @@ spec:
               export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
 
               gen_pass() {
-                while :; do
-                  P="$(tr -dc 'A-Za-z0-9@#%^+=_' </dev/urandom | head -c 32)"
-                  case "$P" in @*) continue ;; esac
-                  printf '%s' "$P"
-                  return
-                done
+                # Use URL-safe characters to avoid Keycloak form decoding errors.
+                tr -dc 'A-Za-z0-9._~-' </dev/urandom | head -c 32
+              }
+
+              is_urlsafe_pass() {
+                printf '%s' "$1" | grep -Eq '^[A-Za-z0-9._~-]+$'
               }
 
               echo "🧩 Ensuring KV v2 at 'secret/'..."
@@ -134,11 +134,25 @@ spec:
               done
 
               echo "🔐 Seeding drools admin + kie-user (if missing)..."
-              if ! vault kv get -format=json secret/drools/admin >/dev/null 2>&1; then
+              if ADMIN_JSON="$(vault kv get -format=json secret/drools/admin 2>/dev/null)"; then
+                ADMIN_PASS="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.password // empty')"
+                if [ -z "${ADMIN_PASS:-}" ] || ! is_urlsafe_pass "$ADMIN_PASS"; then
+                  echo "⚠️  drools/admin password missing or URL-unsafe; rotating"
+                  PASS="$(gen_pass)"
+                  vault kv put secret/drools/admin username=admin password="$PASS"
+                fi
+              else
                 PASS="$(gen_pass)"
                 vault kv put secret/drools/admin username=admin password="$PASS"
               fi
-              if ! vault kv get -format=json secret/drools/kie-user >/dev/null 2>&1; then
+              if KIE_JSON="$(vault kv get -format=json secret/drools/kie-user 2>/dev/null)"; then
+                KIE_PASS="$(printf '%s' "$KIE_JSON" | jq -r '.data.data.password // empty')"
+                if [ -z "${KIE_PASS:-}" ] || ! is_urlsafe_pass "$KIE_PASS"; then
+                  echo "⚠️  drools/kie-user password missing or URL-unsafe; rotating"
+                  PASS="$(gen_pass)"
+                  vault kv put secret/drools/kie-user username=kieserver password="$PASS"
+                fi
+              else
                 PASS="$(gen_pass)"
                 vault kv put secret/drools/kie-user username=kieserver password="$PASS"
               fi

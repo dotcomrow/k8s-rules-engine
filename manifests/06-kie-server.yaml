@@ -1456,7 +1456,7 @@ metadata:
     gravitee.io/definition-listener-port: "8080"
 
     gravitee.io/definition-groups: "rules"
-    gravitee.io/definition-tags: "drools,kie,rules,hasura"
+    gravitee.io/definition-tags: "drools,kie,rules"
     gravitee.io/definition-labels: "internal,rules"
     gravitee.io/definition-categories: "rules"
     gravitee.io/definition-path-mappings: "/kie-server/*"

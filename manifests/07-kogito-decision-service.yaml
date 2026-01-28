@@ -266,7 +266,7 @@ metadata:
     gravitee.io/definition-listener-port: "8080"
 
     gravitee.io/definition-groups: "rules"
-    gravitee.io/definition-tags: "drools,kogito,decisions,hasura"
+    gravitee.io/definition-tags: "drools,kogito,decisions"
     gravitee.io/definition-labels: "internal,decisions"
     gravitee.io/definition-categories: "rules"
     gravitee.io/definition-path-mappings: "/decisions/*"

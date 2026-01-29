@@ -325,7 +325,7 @@ data:
           proxy_set_header Accept-Encoding "";
           sub_filter_types text/html;
           sub_filter_once on;
-          sub_filter '</head>' '<script>window.KOGITO_CONSOLES_KEYCLOAK_CONFIG_CHECK_LOGIN_IFRAME=false;window.KOGITO_CONSOLES_KEYCLOAK_CHECK_LOGIN_IFRAME=false;</script></head>';
+          sub_filter '</head>' '<script>window.KOGITO_CONSOLES_KEYCLOAK_CONFIG=window.KOGITO_CONSOLES_KEYCLOAK_CONFIG||{};window.KOGITO_CONSOLES_KEYCLOAK_CONFIG.checkLoginIframe=false;window.KOGITO_CONSOLES_KEYCLOAK_CONFIG_CHECK_LOGIN_IFRAME=false;window.KOGITO_CONSOLES_KEYCLOAK_CHECK_LOGIN_IFRAME=false;</script></head>';
           proxy_read_timeout 300s;
         }
 
@@ -604,7 +604,7 @@ data:
           proxy_set_header Accept-Encoding "";
           sub_filter_types text/html;
           sub_filter_once on;
-          sub_filter '</head>' '<script>window.KOGITO_CONSOLES_KEYCLOAK_CONFIG_CHECK_LOGIN_IFRAME=false;window.KOGITO_CONSOLES_KEYCLOAK_CHECK_LOGIN_IFRAME=false;</script></head>';
+          sub_filter '</head>' '<script>window.KOGITO_CONSOLES_KEYCLOAK_CONFIG=window.KOGITO_CONSOLES_KEYCLOAK_CONFIG||{};window.KOGITO_CONSOLES_KEYCLOAK_CONFIG.checkLoginIframe=false;window.KOGITO_CONSOLES_KEYCLOAK_CONFIG_CHECK_LOGIN_IFRAME=false;window.KOGITO_CONSOLES_KEYCLOAK_CHECK_LOGIN_IFRAME=false;</script></head>';
           proxy_read_timeout 300s;
         }
 

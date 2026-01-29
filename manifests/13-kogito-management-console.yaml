@@ -289,7 +289,7 @@ data:
           proxy_set_header X-Forwarded-Host $host;
           proxy_set_header Authorization "";
           proxy_set_header Accept-Encoding "";
-          sub_filter_types application/javascript;
+          sub_filter_types *;
           sub_filter_once on;
           sub_filter "onLoad: 'login-required'" "onLoad: 'login-required', checkLoginIframe: false";
           proxy_hide_header Content-Type;
@@ -573,7 +573,7 @@ data:
           proxy_set_header X-Forwarded-Host $host;
           proxy_set_header Authorization "";
           proxy_set_header Accept-Encoding "";
-          sub_filter_types application/javascript;
+          sub_filter_types *;
           sub_filter_once on;
           sub_filter "onLoad: 'login-required'" "onLoad: 'login-required', checkLoginIframe: false";
           proxy_hide_header Content-Type;

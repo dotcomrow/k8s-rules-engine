@@ -288,6 +288,10 @@ data:
           proxy_set_header X-Forwarded-Proto $scheme;
           proxy_set_header X-Forwarded-Host $host;
           proxy_set_header Authorization "";
+          proxy_set_header Accept-Encoding "";
+          sub_filter_types application/javascript;
+          sub_filter_once on;
+          sub_filter "onLoad: 'login-required'" "onLoad: 'login-required', checkLoginIframe: false";
           proxy_hide_header Content-Type;
           add_header Content-Type application/javascript always;
           proxy_read_timeout 300s;
@@ -323,7 +327,7 @@ data:
           proxy_set_header Accept-Encoding "";
           sub_filter_types text/html;
           sub_filter_once on;
-          sub_filter '<script type="text/javascript" src="/app.bundle.js"></script>' '<script>(function(){var h=window.location.hash||"";if(h.indexOf("iss=")===-1){return;}var hash=h.charAt(0)==="#"?h.slice(1):h;var parts=hash.split("&").filter(function(p){return p&&p.indexOf("iss=")!==0;});var nh=parts.join("&");var newUrl=window.location.pathname+window.location.search+(nh?"#"+nh:"");try{history.replaceState(null,document.title,newUrl);}catch(e){window.location.hash=nh?("#"+nh):"";}})();</script><script type="text/javascript" src="/app.bundle.js"></script>';
+          sub_filter '<script type="text/javascript" src="/app.bundle.js"></script>' '<script>(function(){var h=window.location.hash||"";var s=window.location.search||"";function stripIss(q){return q.replace(/(^|&)iss=[^&]*/g,"").replace(/^&/,"");}function keepOAuth(q){if(!q){return"";}var parts=q.split("&").filter(Boolean);var keep=["code","state","session_state","kc_action_status","error","error_description","error_uri"];var out=[];for(var i=0;i<parts.length;i++){var p=parts[i];var eq=p.indexOf("=");var k=eq>=0?p.slice(0,eq):p;if(keep.indexOf(k)!==-1){out.push(p);}}return out.join("&");}var hRaw=h.charAt(0)==="#"?h.slice(1):h;var sRaw=s.charAt(0)==="?"?s.slice(1):s;var sStripped=stripIss(sRaw);var hClean=keepOAuth(stripIss(hRaw));var sClean=keepOAuth(sStripped);if(hClean){var newUrl=window.location.pathname+(sStripped?("?"+sStripped):"")+(hClean?("#"+hClean):"");try{history.replaceState(null,document.title,newUrl);}catch(e){window.location.hash=hClean?("#"+hClean):"";}}else if(sClean){var newUrl2=window.location.pathname+(sStripped?("?"+sStripped):"")+(sClean?("#"+sClean):"");try{history.replaceState(null,document.title,newUrl2);}catch(e){window.location.hash=sClean?("#"+sClean):"";}}})();</script><script type="text/javascript" src="/app.bundle.js"></script>';
           sub_filter '</body>' '<script>(function(){var css=":root{--pf-global--BackgroundColor--light-300:#f0f0f0;--pf-global--BackgroundColor--dark-100:#151515;--pf-global--BackgroundColor--dark-300:#212427;} .pf-c-page{background-color:var(--pf-global--BackgroundColor--light-300)!important;} .pf-c-page__header{background-color:var(--pf-global--BackgroundColor--dark-100)!important;} .pf-c-page__sidebar{background-color:var(--pf-global--BackgroundColor--dark-300)!important;}";function apply(){var style=document.getElementById("kogito-pf-override");if(!style){style=document.createElement("style");style.id="kogito-pf-override";style.textContent=css;document.head.appendChild(style);}}function stripReset(){var target="[class*=\\"pf-c-\\"],[class*=\\"pf-c-\\"]::before,[class*=\\"pf-c-\\"]::after";var removed=false;for(var si=0;si<document.styleSheets.length;si++){var sheet=document.styleSheets[si];var rules;try{rules=sheet.cssRules;}catch(e){continue;}for(var i=rules.length-1;i>=0;i--){var r=rules[i];if(r.type===1&&r.selectorText){var normalized=r.selectorText.replace(/\\s+/g,"");if(normalized===target){sheet.deleteRule(i);removed=true;}}}}return removed;}function tick(){apply();var done=stripReset();attempts++;if(done||attempts>20){clearInterval(timer);}}var attempts=0;var timer=setInterval(tick,250);if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",tick);}else{tick();}})();</script></body>';
           proxy_read_timeout 300s;
         }
@@ -568,6 +572,10 @@ data:
           proxy_set_header X-Forwarded-Proto $scheme;
           proxy_set_header X-Forwarded-Host $host;
           proxy_set_header Authorization "";
+          proxy_set_header Accept-Encoding "";
+          sub_filter_types application/javascript;
+          sub_filter_once on;
+          sub_filter "onLoad: 'login-required'" "onLoad: 'login-required', checkLoginIframe: false";
           proxy_hide_header Content-Type;
           add_header Content-Type application/javascript always;
           proxy_read_timeout 300s;
@@ -603,7 +611,7 @@ data:
           proxy_set_header Accept-Encoding "";
           sub_filter_types text/html;
           sub_filter_once on;
-          sub_filter '<script type="text/javascript" src="/app.bundle.js"></script>' '<script>(function(){var h=window.location.hash||"";if(h.indexOf("iss=")===-1){return;}var hash=h.charAt(0)==="#"?h.slice(1):h;var parts=hash.split("&").filter(function(p){return p&&p.indexOf("iss=")!==0;});var nh=parts.join("&");var newUrl=window.location.pathname+window.location.search+(nh?"#"+nh:"");try{history.replaceState(null,document.title,newUrl);}catch(e){window.location.hash=nh?("#"+nh):"";}})();</script><script type="text/javascript" src="/app.bundle.js"></script>';
+          sub_filter '<script type="text/javascript" src="/app.bundle.js"></script>' '<script>(function(){var h=window.location.hash||"";var s=window.location.search||"";function stripIss(q){return q.replace(/(^|&)iss=[^&]*/g,"").replace(/^&/,"");}function keepOAuth(q){if(!q){return"";}var parts=q.split("&").filter(Boolean);var keep=["code","state","session_state","kc_action_status","error","error_description","error_uri"];var out=[];for(var i=0;i<parts.length;i++){var p=parts[i];var eq=p.indexOf("=");var k=eq>=0?p.slice(0,eq):p;if(keep.indexOf(k)!==-1){out.push(p);}}return out.join("&");}var hRaw=h.charAt(0)==="#"?h.slice(1):h;var sRaw=s.charAt(0)==="?"?s.slice(1):s;var sStripped=stripIss(sRaw);var hClean=keepOAuth(stripIss(hRaw));var sClean=keepOAuth(sStripped);if(hClean){var newUrl=window.location.pathname+(sStripped?("?"+sStripped):"")+(hClean?("#"+hClean):"");try{history.replaceState(null,document.title,newUrl);}catch(e){window.location.hash=hClean?("#"+hClean):"";}}else if(sClean){var newUrl2=window.location.pathname+(sStripped?("?"+sStripped):"")+(sClean?("#"+sClean):"");try{history.replaceState(null,document.title,newUrl2);}catch(e){window.location.hash=sClean?("#"+sClean):"";}}})();</script><script type="text/javascript" src="/app.bundle.js"></script>';
           proxy_read_timeout 300s;
         }
 

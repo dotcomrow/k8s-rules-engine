@@ -257,49 +257,9 @@ curl http://localhost:8080/decisions/q/metrics
 **Issue**: Kogito service 404
 **Solution**: Ensure decision models are deployed
 
-**Issue**: Kogito Management Console UI looks unstyled (no backgrounds, buttons/tables/dropdowns look broken)
-**Solution**: Keep the proxy injection in place to remove the bad PatternFly reset rule.
-
-```yaml
-ai_handoff:
-  title: "Kogito Management Console UI unstyled"
-  context:
-    repo: /Users/christopherlyons/GitHub/k8s-rules-engine
-    manifest: manifests/k8s-rules.engine.yaml
-    component: kogito-management-console-proxy (nginx)
-    access: via Teleport (not Gravitee)
-  symptoms:
-    - Page renders, JS runs, fonts/images load, but layout looks broken.
-    - Buttons/dropdowns/lists/tables look unstyled; backgrounds/header missing.
-    - Task console is styled correctly; only management console is broken.
-  root_cause:
-    - Management console bundle includes a bad PatternFly reset rule that zeroes padding,
-      margin, and background for all PF component classes.
-    - Rule (exact selector):
-      "[class*=\"pf-c-\"], [class*=\"pf-c-\"]::before, [class*=\"pf-c-\"]::after"
-  current_fix:
-    - Nginx proxy injects a script (via sub_filter) that:
-      - Adds PF background variables for the page/header/sidebar.
-      - Removes the bad reset rule at runtime by matching the selector (whitespace normalized).
-  config_location:
-    - manifests/k8s-rules.engine.yaml
-    - ConfigMap: kogito-management-console-proxy-config
-    - nginx.conf: location /
-  key_settings:
-    - proxy_set_header Accept-Encoding ""  # required so sub_filter works
-    - sub_filter '</body>' '<script>(...remove reset rule...)</script></body>'
-  verification:
-    - Open the management console URL and confirm layout is styled.
-    - Browser console check:
-      - The reset rule should be gone:
-        - Iterate document.styleSheets and verify no rule with that selector remains.
-    - Nginx proxy HTML response includes "kogito-pf-override" marker.
-  rollback:
-    - Remove the injected script and background overrides from the proxy config.
-  notes:
-    - Task console image does not include the bad reset; only management console does.
-    - If this recurs, consider pinning to a console image that lacks the reset rule.
-```
+**Note**: We no longer inject CSS into the Kogito Management Console via the proxy. If the
+UI appears unstyled, fix it at the source (custom image/theme) rather than adding a proxy
+sub_filter hack.
 
 ## Production Considerations
 

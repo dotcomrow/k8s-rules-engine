@@ -291,7 +291,7 @@ data:
           proxy_set_header Accept-Encoding "";
           sub_filter_types *;
           sub_filter_once on;
-          sub_filter "onLoad: 'login-required'" "onLoad: 'login-required', checkLoginIframe: false";
+          sub_filter "onLoad: 'login-required'" "onLoad: 'login-required', checkLoginIframe: false, responseMode: 'query'";
           proxy_hide_header Content-Type;
           add_header Content-Type application/javascript always;
           proxy_read_timeout 300s;
@@ -575,7 +575,7 @@ data:
           proxy_set_header Accept-Encoding "";
           sub_filter_types *;
           sub_filter_once on;
-          sub_filter "onLoad: 'login-required'" "onLoad: 'login-required', checkLoginIframe: false";
+          sub_filter "onLoad: 'login-required'" "onLoad: 'login-required', checkLoginIframe: false, responseMode: 'query'";
           proxy_hide_header Content-Type;
           add_header Content-Type application/javascript always;
           proxy_read_timeout 300s;

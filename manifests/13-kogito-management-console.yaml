@@ -11,7 +11,7 @@ data:
   KOGITO_CONSOLES_KEYCLOAK_CONFIG_URL: "https://auth.suncoast.systems"
   KOGITO_CONSOLES_KEYCLOAK_CONFIG_REALM: "internal"
   KOGITO_CONSOLES_KEYCLOAK_CONFIG_HEALTH_CHECK_URL: "https://auth.suncoast.systems/realms/internal/.well-known/openid-configuration"
-  KOGITO_CONSOLES_KEYCLOAK_CONFIG_DISABLE_HEALTH_CHECK: "false"
+  KOGITO_CONSOLES_KEYCLOAK_CONFIG_DISABLE_HEALTH_CHECK: "true"
   KOGITO_CONSOLES_KEYCLOAK_CONFIG_UPDATE_TOKEN_VALIDITY: "30"
 
 ---
@@ -710,4 +710,3 @@ spec:
   ports:
     - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
   type: ClusterIP
-

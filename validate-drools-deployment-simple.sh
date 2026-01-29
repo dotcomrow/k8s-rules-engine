@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =========================
-# Drools/Kogito Platform Validation Script (Simplified)
+# Drools Platform Validation Script (Simplified)
 # Validates the basic Drools platform without Vault/YugabyteDB integration
 # =========================
 
@@ -17,7 +17,7 @@ NC='\033[0m'
 NAMESPACE="drools"
 
 echo -e "${BLUE}================================"
-echo -e "Drools/Kogito Platform Validation"
+echo -e "Drools Platform Validation"
 echo -e "================================${NC}"
 
 # Check kubectl
@@ -41,7 +41,6 @@ echo -e "\n${BLUE}2. Checking Docker image accessibility...${NC}"
 IMAGES=(
     "quay.io/kiegroup/business-central:latest"
     "quay.io/kiegroup/kie-server:latest"
-    "quay.io/kiegroup/kogito-decisions-quarkus:1.44.1.Final"
     "nginx:1.25-alpine"
 )
 
@@ -53,7 +52,7 @@ done
 
 # Check Service Accounts
 echo -e "\n${BLUE}3. Checking Service Accounts...${NC}"
-SERVICE_ACCOUNTS=("drools-workbench" "drools-kie-server" "drools-kogito-decisions" "drools-api-gateway")
+SERVICE_ACCOUNTS=("drools-workbench" "drools-kie-server" "drools-api-gateway")
 
 for sa in "${SERVICE_ACCOUNTS[@]}"; do
     if kubectl get serviceaccount "$sa" -n "$NAMESPACE" &>/dev/null; then
@@ -102,19 +101,8 @@ else
     echo -e "${RED}✗ KIE Server is not running (Status: $KIE_SERVER_STATUS)${NC}"
 fi
 
-# Check Kogito Decision Service
-echo -e "\n${BLUE}6. Checking Kogito Decision Service...${NC}"
-KOGITO_STATUS=$(kubectl get pods -n "$NAMESPACE" -l app=kogito-decision-service -o jsonpath='{.items[*].status.phase}' 2>/dev/null || echo "NotFound")
-
-if [[ "$KOGITO_STATUS" == *"Running"* ]]; then
-    RUNNING_COUNT=$(echo "$KOGITO_STATUS" | tr ' ' '\n' | grep -c "Running" || echo "0")
-    echo -e "${GREEN}✓ Kogito Decision Service has $RUNNING_COUNT running pods${NC}"
-else
-    echo -e "${YELLOW}⚠ Kogito Decision Service status: $KOGITO_STATUS${NC}"
-fi
-
 # Check API Gateway
-echo -e "\n${BLUE}7. Checking API Gateway...${NC}"
+echo -e "\n${BLUE}6. Checking API Gateway...${NC}"
 GATEWAY_STATUS=$(kubectl get pods -n "$NAMESPACE" -l app=api-gateway -o jsonpath='{.items[*].status.phase}' 2>/dev/null || echo "NotFound")
 
 if [[ "$GATEWAY_STATUS" == *"Running"* ]]; then
@@ -125,8 +113,8 @@ else
 fi
 
 # Check Services
-echo -e "\n${BLUE}8. Checking Services...${NC}"
-SERVICES=("kie-workbench" "kie-server" "kogito-decision-service" "drools-api-gateway")
+echo -e "\n${BLUE}7. Checking Services...${NC}"
+SERVICES=("kie-workbench" "kie-server" "drools-api-gateway")
 
 for svc in "${SERVICES[@]}"; do
     if kubectl get service "$svc" -n "$NAMESPACE" &>/dev/null; then
@@ -142,8 +130,8 @@ for svc in "${SERVICES[@]}"; do
 done
 
 # Check Teleport annotations
-echo -e "\n${BLUE}9. Checking Teleport annotations...${NC}"
-TELEPORT_SERVICES=("kie-workbench" "kie-server" "kogito-decision-service" "drools-api-gateway")
+echo -e "\n${BLUE}8. Checking Teleport annotations...${NC}"
+TELEPORT_SERVICES=("kie-workbench" "kie-server" "drools-api-gateway")
 
 for svc in "${TELEPORT_SERVICES[@]}"; do
     TELEPORT_NAME=$(kubectl get service "$svc" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.teleport\.dev/name}' 2>/dev/null || echo "")
@@ -155,7 +143,7 @@ for svc in "${TELEPORT_SERVICES[@]}"; do
 done
 
 # Health check endpoints
-echo -e "\n${BLUE}10. Testing health endpoints...${NC}"
+echo -e "\n${BLUE}9. Testing health endpoints...${NC}"
 
 # Test API Gateway health
 if kubectl get pods -n "$NAMESPACE" -l app=api-gateway | grep -q Running; then
@@ -191,7 +179,6 @@ echo -e "✓ All images are now publicly accessible without authentication"
 echo -e "\n${BLUE}Access URLs (when Teleport is configured):${NC}"
 echo -e "• KIE Workbench: https://workbench.drools.yourdomain.com"
 echo -e "• KIE Server: https://kie-server.drools.yourdomain.com"
-echo -e "• Kogito API: https://kogito.drools.yourdomain.com"
 echo -e "• API Gateway: https://api.drools.yourdomain.com"
 
 echo -e "\n${BLUE}Next Steps:${NC}"

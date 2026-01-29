@@ -100,12 +100,6 @@ spec:
                 exit 1
               fi
 
-              KOGITO_CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-kogito-console)"
-              KOGITO_CLIENT_ID="$(printf '%s' "$KOGITO_CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
-              if [ -z "$KOGITO_CLIENT_ID" ]; then
-                echo "❌ Missing kogito-console client id in Vault"
-                exit 1
-              fi
 
               KIE_USER_JSON="$(vault kv get -format=json secret/drools/kie-user)"
               KIE_SERVER_USER="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.username // empty')"
@@ -127,7 +121,6 @@ spec:
               export KIE_SERVER_CLIENT_SECRET="${KIE_SERVER_CLIENT_SECRET}"
               export KIE_SERVER_USER="${KIE_SERVER_USER}"
               export KIE_SERVER_PASSWORD="${KIE_SERVER_PASSWORD}"
-              export KOGITO_CONSOLE_CLIENT_ID="${KOGITO_CLIENT_ID}"
               EOF
           volumeMounts:
             - { name: keycloak-admin-env, mountPath: /shared }
@@ -166,10 +159,6 @@ spec:
               fi
               if [ -z "${KIE_SERVER_CLIENT_ID:-}" ] || [ -z "${KIE_SERVER_CLIENT_SECRET:-}" ]; then
                 echo "❌ Missing KIE_SERVER_CLIENT_ID or KIE_SERVER_CLIENT_SECRET in keycloak-env.sh"
-                exit 1
-              fi
-              if [ -z "${KOGITO_CONSOLE_CLIENT_ID:-}" ]; then
-                echo "❌ Missing KOGITO_CONSOLE_CLIENT_ID in keycloak-env.sh"
                 exit 1
               fi
               if [ -z "${CONTROLLER_USER:-}" ] || [ -z "${CONTROLLER_PASSWORD:-}" ]; then
@@ -694,9 +683,7 @@ spec:
 
               ensure_roles_mapper "$WORKBENCH_CLIENT_ID"
               ensure_roles_mapper "$KIE_SERVER_SERVICE_CLIENT_ID"
-              ensure_roles_mapper "$KOGITO_CONSOLE_CLIENT_ID"
               ensure_client_roles_mapper "$WORKBENCH_CLIENT_ID"
-              ensure_client_roles_mapper "$KOGITO_CONSOLE_CLIENT_ID"
               ensure_audience_mapper "$WORKBENCH_CLIENT_ID" "$KIE_SERVER_SERVICE_CLIENT_ID"
               ensure_audience_mapper "$WORKBENCH_CLIENT_ID" "$KIE_SERVER_CLIENT_ID"
               ensure_workbench_redirects "$WORKBENCH_CLIENT_ID"

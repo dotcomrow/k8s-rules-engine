@@ -31,7 +31,6 @@ data:
 
       upstream kie_workbench { server kie-workbench.drools.svc.cluster.local:8080; keepalive 32; }
       upstream kie_server    { server kie-server.drools.svc.cluster.local:8080; keepalive 32; }
-      upstream kogito_decision { server kogito-decision-service.drools.svc.cluster.local:8080; keepalive 32; }
 
       server {
         listen 8080; server_name localhost;
@@ -45,7 +44,7 @@ data:
           access_log off;
           add_header Content-Type "application/json; charset=utf-8" always;
           add_header Cache-Control "no-cache" always;
-          return 200 '{"status":"healthy","services":{"business-central":"/business-central/","kie-server":"/kie-server/","health":"/health","api-docs":"/api/docs"},"individual_access":{"workbench":"https://workbench-drools.teleport.app.suncoast.systems/business-central/","kie-server":"https://kie-server-drools.teleport.app.suncoast.systems/","decisions":"https://decisions-drools.teleport.app.suncoast.systems/","jobs":"https://jobs-drools.teleport.app.suncoast.systems/","monitoring":"https://monitoring-drools.teleport.app.suncoast.systems/"}}';
+          return 200 '{"status":"healthy","services":{"business-central":"/business-central/","kie-server":"/kie-server/","health":"/health"},"individual_access":{"workbench":"https://workbench-drools.teleport.app.suncoast.systems/business-central/","kie-server":"https://kie-server-drools.teleport.app.suncoast.systems/"}}';
         }
 
         location /business-central/ {
@@ -81,7 +80,7 @@ data:
             add_header Content-Length 0 always; add_header Content-Type text/plain always;
             return 204;
           }
-          proxy_pass http://kogito_decision/kie-server/;
+          proxy_pass http://kie_server/kie-server/;
           proxy_http_version 1.1; proxy_set_header Connection "";
           proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -92,51 +91,8 @@ data:
           add_header Access-Control-Expose-Headers "X-KIE-ContentType" always;
         }
 
-        location /decisions/ {
-          if ($request_method = OPTIONS) {
-            add_header Access-Control-Allow-Origin $cors_origin always;
-            add_header Access-Control-Allow-Credentials $cors_creds always;
-            add_header Access-Control-Allow-Methods "GET,POST,PUT,DELETE,OPTIONS,PATCH" always;
-            add_header Access-Control-Allow-Headers $cors_headers always;
-            add_header Access-Control-Max-Age 3600 always; add_header Content-Length 0 always; add_header Content-Type text/plain always;
-            return 204;
-          }
-          proxy_pass http://kogito_decision/kie-server/;
-          proxy_http_version 1.1; proxy_set_header Connection "";
-          proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr;
-          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-          proxy_set_header X-Forwarded-Proto https; proxy_set_header X-Forwarded-Host $host;
-          add_header X-Frame-Options DENY always; add_header X-Content-Type-Options nosniff always; add_header X-XSS-Protection "1; mode=block" always; add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-          add_header Access-Control-Allow-Origin $cors_origin always; add_header Access-Control-Allow-Credentials $cors_creds always;
-        }
-
         location = /health { access_log off; add_header Content-Type text/plain always; return 200 'healthy'; }
         location = /ready  { access_log off; add_header Content-Type text/plain always; return 200 'ready'; }
-
-        location /api/docs {
-          if ($request_method = OPTIONS) {
-            add_header Access-Control-Allow-Origin $cors_origin always;
-            add_header Access-Control-Allow-Credentials $cors_creds always;
-            add_header Access-Control-Allow-Methods "GET,POST,PUT,DELETE,OPTIONS,PATCH" always;
-            add_header Access-Control-Allow-Headers $cors_headers always; add_header Access-Control-Max-Age 3600 always;
-            add_header Content-Length 0 always; add_header Content-Type text/plain always;
-            return 204;
-          }
-          proxy_pass http://kogito_decision/kie-server/docs/;
-          proxy_http_version 1.1; proxy_set_header Connection ""; proxy_set_header Host $host;
-          add_header Access-Control-Allow-Origin $cors_origin always;
-        }
-
-        location /api/openapi {
-          if ($request_method = OPTIONS) {
-            add_header Access-Control-Allow-Origin $cors_origin always; add_header Access-Control-Allow-Credentials $cors_creds always;
-            add_header Access-Control-Allow-Methods "GET,POST,PUT,DELETE,OPTIONS,PATCH" always; add_header Access-Control-Allow-Headers $cors_headers always;
-            add_header Access-Control-Max-Age 3600 always; add_header Content-Length 0 always; add_header Content-Type text/plain always; return 204;
-          }
-          proxy_pass http://kogito_decision/kie-server/services/rest/server;
-          proxy_http_version 1.1; proxy_set_header Connection ""; proxy_set_header Host $host;
-          add_header Access-Control-Allow-Origin $cors_origin always; add_header Content-Type application/json always;
-        }
       }
     }
 ---
@@ -190,4 +146,3 @@ spec:
   ports:
     - { name: http, port: 8080, targetPort: 8080, protocol: TCP }
   type: ClusterIP
-

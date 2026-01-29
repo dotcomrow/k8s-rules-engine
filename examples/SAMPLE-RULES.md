@@ -1,6 +1,6 @@
 # Sample Drools Rules Examples
 
-This directory contains example rules and decision models to help you get started with the Drools/Kogito platform.
+This directory contains example rules and decision models to help you get started with the Drools platform.
 
 ## Quick Start Examples
 
@@ -300,23 +300,6 @@ curl -X POST \
   }'
 ```
 
-### Kogito Decision Service API
-
-```bash
-# Health check
-curl http://localhost:8080/decisions/q/health
-
-# Execute decision (example endpoint - depends on your deployed model)
-curl -X POST \
-  -H "Content-Type: application/json" \
-  http://localhost:8080/decisions/loan-approval \
-  -d '{
-    "creditScore": 720,
-    "annualIncome": 65000,
-    "loanAmount": 200000
-  }'
-```
-
 ## Project Structure in KIE Workbench
 
 When you create a project in KIE Workbench, organize it like this:
@@ -453,11 +436,11 @@ public class PersonDiscountRulesTest {
 
 3. **Test Rules**
    - Use REST API to test rule execution
-   - Monitor via Kogito Data Index
+   - Monitor via KIE Server logs/metrics
 
 4. **Production Deployment**
    - Export as KJAR
    - Deploy to production KIE Server instances
    - Configure load balancing and scaling
 
-This gives you a complete starting point for developing business rules with your Drools/Kogito platform!
+This gives you a complete starting point for developing business rules with your Drools platform!

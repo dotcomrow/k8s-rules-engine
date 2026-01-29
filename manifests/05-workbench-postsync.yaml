@@ -101,7 +101,6 @@ spec:
               }
 
               restart_deploy "kie-server" "10m"
-              restart_deploy "kogito-decision-service" "10m"
               restart_deploy "kie-workbench" "15m"
 
               if [ ! -s "$PROJECTS_JSON" ]; then
@@ -223,4 +222,3 @@ spec:
             name: workbench-rules-import
             items:
               - { key: projects.json, path: projects.json, mode: 0444 }
-

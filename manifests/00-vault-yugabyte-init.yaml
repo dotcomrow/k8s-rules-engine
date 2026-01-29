@@ -70,7 +70,7 @@ spec:
               VAULTADMIN_KV_PATH="secret/vaultadmin"
               USER_ADMIN="drools_admin"
               USER_RO="drools_ro"
-              SCHEMAS="drools kie_server kogito data_index"
+              SCHEMAS="drools kie_server"
               VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
               AUTH_PATH="kubernetes"
               DB_MOUNT="yugabyte-db"
@@ -271,17 +271,17 @@ spec:
 
               run_psql_with_retry "set search_path ${USER_ADMIN}" \
                 psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
-                  -c "ALTER ROLE ${USER_ADMIN} SET search_path = drools,kie_server,kogito,data_index,public;"
+                  -c "ALTER ROLE ${USER_ADMIN} SET search_path = drools,kie_server,public;"
               run_psql_with_retry "set search_path ${USER_RO}" \
                 psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$APP_DB" -v ON_ERROR_STOP=1 \
-                  -c "ALTER ROLE ${USER_RO} SET search_path = drools,kie_server,kogito,data_index,public;"
+                  -c "ALTER ROLE ${USER_RO} SET search_path = drools,kie_server,public;"
 
               if vault kv get -format=json "${YSQL_SU_KV_PATH}" >/dev/null 2>&1; then
                 echo "🔧 Superuser takeover enabled via ${YSQL_SU_KV_PATH}"
                 SU_USER="$(vault kv get -format=json "${YSQL_SU_KV_PATH}" | jq -r '.data.data.username // "yugabyte"')"
                 SU_PASS="$(vault kv get -format=json "${YSQL_SU_KV_PATH}" | jq -r '.data.data.password')"
                 export PGPASSWORD="$SU_PASS"
-                SCHEMA_IN="'drools','kie_server','kogito','data_index'"
+                SCHEMA_IN="'drools','kie_server'"
 
                 TABLE_OWNER_SQL="$(psql -h "$PGHOST" -p "$PGPORT" -U "$SU_USER" -d "$APP_DB" -Atc \
                   "SELECT 'ALTER TABLE '||quote_ident(schemaname)||'.'||quote_ident(tablename)||' OWNER TO ${USER_ADMIN};'
@@ -344,8 +344,6 @@ spec:
               path "secret/data/keycloak-client-secret-drools-kie-server" { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-drools-kie-server-service" { capabilities = ["read"] }
               path "secret/data/keycloak-client-secret-drools-kie-server-service" { capabilities = ["read"] }
-              path "secret/data/keycloak-client-id-kogito-console"     { capabilities = ["read"] }
-              path "secret/data/keycloak-client-secret-kogito-console" { capabilities = ["read"] }
               path "secret/data/k8s-rules-engine-github-packages-username" { capabilities = ["read"] }
               path "secret/data/k8s-rules-engine-github-packages-token" { capabilities = ["read"] }
               path "secret/data/vaultadmin"                          { capabilities = ["read"] }
@@ -358,13 +356,12 @@ spec:
               path "secret/data/keycloak-client-secret-drools-kie-server" { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-drools-kie-server-service" { capabilities = ["read"] }
               path "secret/data/keycloak-client-secret-drools-kie-server-service" { capabilities = ["read"] }
-              path "secret/data/keycloak-client-id-kogito-console"    { capabilities = ["read"] }
               path "secret/data/drools/admin"                        { capabilities = ["read"] }
               path "secret/data/drools/kie-user"                     { capabilities = ["read"] }
               EOF
 
               vault write auth/${AUTH_PATH}/role/drools \
-                bound_service_account_names="drools-workbench,drools-kie-server,drools-kogito-decisions,drools-kogito-jobs,drools-kogito-data-index,drools-kogito-console,drools-rules-service,drools-api-gateway" \
+                bound_service_account_names="drools-workbench,drools-kie-server,drools-rules-service,drools-api-gateway" \
                 bound_service_account_namespaces="drools" \
                 policies="drools,${ROLE_STATIC_ADMIN}" \
                 ttl="48h"
@@ -410,38 +407,11 @@ subjects:
   - kind: ServiceAccount
     name: drools-kie-server
     namespace: drools
-  - kind: ServiceAccount
-    name: drools-kogito-decisions
-    namespace: drools
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: job-status-reader-drools
 ---
-# RBAC for jobs service init container to read pod status
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: pod-reader-drools
-  namespace: drools
-rules:
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: pod-reader-for-jobs-service
-  namespace: drools
-subjects:
-  - kind: ServiceAccount
-    name: drools-kogito-jobs
-    namespace: drools
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: pod-reader-drools
 ---
 # RBAC for ArgoCD PostSync hook (rollout + import)
 apiVersion: rbac.authorization.k8s.io/v1
@@ -452,7 +422,7 @@ metadata:
 rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    resourceNames: ["kie-workbench", "kie-server", "kogito-decision-service"]
+    resourceNames: ["kie-workbench", "kie-server"]
     verbs: ["get", "watch", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -496,30 +466,6 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: drools-kogito-decisions
-  namespace: drools
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: drools-kogito-jobs
-  namespace: drools
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: drools-kogito-data-index
-  namespace: drools
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: drools-kogito-console
-  namespace: drools
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
   name: drools-rules-service
   namespace: drools
 ---
@@ -533,12 +479,6 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: kie-server-openapi
-  namespace: drools
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: kogito-decision-openapi
   namespace: drools
 ---
 apiVersion: v1

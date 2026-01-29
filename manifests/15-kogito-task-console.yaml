@@ -63,9 +63,9 @@ spec:
           args: ["/entrypoint/run-console.sh"]
           ports: [{ containerPort: 8080 }]
           env:
-            - { name: KOGITO_DATAINDEX_HTTP_URL, value: "/graphql" }
-            - { name: KOGITO_DATAINDEX_WS_URL, value: "/graphql" }
-            - { name: KOGITO_JOBS_SERVICE_URL, value: "/jobs" }
+            - { name: KOGITO_DATAINDEX_HTTP_URL, value: "https://kogito-task-console-drools.teleport.app.suncoast.systems/graphql" }
+            - { name: KOGITO_DATAINDEX_WS_URL, value: "wss://kogito-task-console-drools.teleport.app.suncoast.systems/graphql" }
+            - { name: KOGITO_JOBS_SERVICE_URL, value: "https://kogito-task-console-drools.teleport.app.suncoast.systems/jobs" }
             - { name: QUARKUS_HTTP_CORS, value: "true" }
             - { name: QUARKUS_HTTP_CORS_ORIGINS, value: "https://kogito-task-console-drools.teleport.app.suncoast.systems,https://kogito-console-drools.teleport.app.suncoast.systems,https://teleport.app.suncoast.systems" }
             - { name: QUARKUS_HTTP_CORS_HEADERS, value: "authorization,content-type,accept,origin,referer,cache-control,pragma" }

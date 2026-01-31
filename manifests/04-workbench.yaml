@@ -35,7 +35,9 @@ kind: Deployment
 metadata:
   name: kie-workbench
   namespace: drools
-  labels: { app: kie-workbench }
+  labels:
+    app: kie-workbench
+    platform.suncoast.systems/vpa-exclude: "true"
   annotations:
     reloader.stakater.com/auto: "true"
 spec:
@@ -46,7 +48,9 @@ spec:
     matchLabels: { app: kie-workbench }
   template:
     metadata:
-      labels: { app: kie-workbench }
+      labels:
+        app: kie-workbench
+        platform.suncoast.systems/vpa-exclude: "true"
     spec:
       serviceAccountName: drools-workbench
       securityContext:
@@ -643,6 +647,10 @@ spec:
       containers:
         - name: kie-workbench
           image: quay.io/kiegroup/business-central-workbench-showcase:7.74.1.Final
+          resources:
+            requests:
+              cpu: "800m"
+              memory: "3Gi"
           command: ["/bin/bash", "-c"]
           args:
             - |

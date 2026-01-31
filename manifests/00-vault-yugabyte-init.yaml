@@ -46,9 +46,22 @@ spec:
         - name: root-token
           secret:
             secretName: vault-root-token
+        - name: vault-bin
+          emptyDir: {}
+      initContainers:
+        - name: vault-cli
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              cp /bin/vault /vault-bin/vault
+              chmod +x /vault-bin/vault
+          volumeMounts:
+            - name: vault-bin
+              mountPath: /vault-bin
       containers:
         - name: setup-role
-          image: hashicorp/vault:1.15.4
+          image: postgres:15.6-alpine
           env:
             - name: RESET_SCHEMAS
               value: "false"
@@ -104,8 +117,7 @@ spec:
                 done
               }
 
-              apk add --no-cache postgresql15-client jq netcat-openbsd curl >/dev/null || true
-              export PATH="$PATH:/vault-bin"
+              export PATH="/vault-bin:$PATH"
               export VAULT_ADDR
 
               until [ -s /vault-token/VAULT_TOKEN ]; do echo "🔁 waiting for /vault-token/VAULT_TOKEN..."; sleep 2; done
@@ -121,53 +133,38 @@ spec:
               }
 
               echo "🧩 Ensuring KV v2 at 'secret/'..."
-              while :; do
-                if vault secrets list -format=json 2>/dev/null \
-                  | jq -e '."secret/".type=="kv" and ."secret/".options.version=="2"' >/dev/null; then
-                  echo "✅ 'secret/' is KVv2"; break
-                fi
-                if vault secrets list -format=json 2>/dev/null | jq -e 'has("secret/")' >/dev/null; then
-                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."; exit 1
-                fi
-                vault secrets enable -path=secret -version=2 kv && break
-                sleep 2
-              done
+              if ! vault secrets list -format=json 2>/dev/null | grep -q '"secret/"'; then
+                vault secrets enable -path=secret -version=2 kv || true
+              fi
 
               echo "🔐 Seeding drools admin + kie-user (if missing)..."
-              if ADMIN_JSON="$(vault kv get -format=json secret/drools/admin 2>/dev/null)"; then
-                ADMIN_PASS="$(printf '%s' "$ADMIN_JSON" | jq -r '.data.data.password // empty')"
-                if [ -z "${ADMIN_PASS:-}" ] || ! is_urlsafe_pass "$ADMIN_PASS"; then
-                  echo "⚠️  drools/admin password missing or URL-unsafe; rotating"
-                  PASS="$(gen_pass)"
-                  vault kv put secret/drools/admin username=admin password="$PASS"
-                fi
-              else
+              ADMIN_PASS="$(vault kv get -field=password secret/drools/admin 2>/dev/null || true)"
+              if [ -z "${ADMIN_PASS:-}" ] || ! is_urlsafe_pass "$ADMIN_PASS"; then
+                echo "⚠️  drools/admin password missing or URL-unsafe; rotating"
                 PASS="$(gen_pass)"
                 vault kv put secret/drools/admin username=admin password="$PASS"
               fi
-              if KIE_JSON="$(vault kv get -format=json secret/drools/kie-user 2>/dev/null)"; then
-                KIE_PASS="$(printf '%s' "$KIE_JSON" | jq -r '.data.data.password // empty')"
-                if [ -z "${KIE_PASS:-}" ] || ! is_urlsafe_pass "$KIE_PASS"; then
-                  echo "⚠️  drools/kie-user password missing or URL-unsafe; rotating"
-                  PASS="$(gen_pass)"
-                  vault kv put secret/drools/kie-user username=kieserver password="$PASS"
-                fi
-              else
+              KIE_PASS="$(vault kv get -field=password secret/drools/kie-user 2>/dev/null || true)"
+              if [ -z "${KIE_PASS:-}" ] || ! is_urlsafe_pass "$KIE_PASS"; then
+                echo "⚠️  drools/kie-user password missing or URL-unsafe; rotating"
                 PASS="$(gen_pass)"
                 vault kv put secret/drools/kie-user username=kieserver password="$PASS"
               fi
 
-              until getent hosts "$PGHOST" >/dev/null 2>&1; do echo "🔄 waiting for DNS $PGHOST..."; sleep 3; done
-              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
+              until pg_isready -h "$PGHOST" -p "$PGPORT" >/dev/null 2>&1; do
+                echo "⏳ waiting for DB $PGHOST:$PGPORT..."
+                sleep 3
+              done
               echo "✅ Yugabyte reachable"
 
               while true; do
                 echo "🔐 Fetching ${VAULTADMIN_KV_PATH}..."
-                if VAULTADMIN_JSON="$(vault kv get -format=json "${VAULTADMIN_KV_PATH}" 2>/dev/null)"; then
-                  VAULTADMIN_PASS="$(printf '%s' "${VAULTADMIN_JSON}" | jq -r '.data.data.password // .data.data.value // empty')"
-                  if [ -n "${VAULTADMIN_PASS}" ]; then
-                    break
-                  fi
+                VAULTADMIN_PASS="$(vault kv get -field=password "${VAULTADMIN_KV_PATH}" 2>/dev/null || true)"
+                if [ -z "${VAULTADMIN_PASS:-}" ]; then
+                  VAULTADMIN_PASS="$(vault kv get -field=value "${VAULTADMIN_KV_PATH}" 2>/dev/null || true)"
+                fi
+                if [ -n "${VAULTADMIN_PASS:-}" ]; then
+                  break
                 fi
                 echo "⏳ ${VAULTADMIN_KV_PATH} not ready; retrying in 5s"
                 sleep 5
@@ -278,8 +275,12 @@ spec:
 
               if vault kv get -format=json "${YSQL_SU_KV_PATH}" >/dev/null 2>&1; then
                 echo "🔧 Superuser takeover enabled via ${YSQL_SU_KV_PATH}"
-                SU_USER="$(vault kv get -format=json "${YSQL_SU_KV_PATH}" | jq -r '.data.data.username // "yugabyte"')"
-                SU_PASS="$(vault kv get -format=json "${YSQL_SU_KV_PATH}" | jq -r '.data.data.password')"
+                SU_USER="$(vault kv get -field=username "${YSQL_SU_KV_PATH}" 2>/dev/null || true)"
+                [ -n "${SU_USER:-}" ] || SU_USER="yugabyte"
+                SU_PASS="$(vault kv get -field=password "${YSQL_SU_KV_PATH}" 2>/dev/null || true)"
+                if [ -z "${SU_PASS:-}" ]; then
+                  SU_PASS="$(vault kv get -field=value "${YSQL_SU_KV_PATH}" 2>/dev/null || true)"
+                fi
                 export PGPASSWORD="$SU_PASS"
                 SCHEMA_IN="'drools','kie_server'"
 
@@ -309,7 +310,7 @@ spec:
                 echo "ℹ️ Superuser KV not found; skipping ownership takeover."
               fi
 
-              if ! vault secrets list -format=json | jq -e 'has("'"${DB_MOUNT}"'/")' >/dev/null 2>&1; then
+              if ! vault secrets list -format=json 2>/dev/null | grep -q "\"${DB_MOUNT}/\""; then
                 vault secrets enable -path="${DB_MOUNT}" database
               fi
 
@@ -372,15 +373,17 @@ spec:
                 policies="keycloak-admin-job" \
                 ttl="1h"
 
-              CREDS_JSON="$(vault read -format=json ${DB_MOUNT}/static-creds/${ROLE_STATIC_ADMIN})"
-              DB_USER="$(printf '%s' "$CREDS_JSON" | jq -r .data.username)"
-              DB_PASS="$(printf '%s' "$CREDS_JSON" | jq -r .data.password)"
+              DB_USER="$(vault read -field=username ${DB_MOUNT}/static-creds/${ROLE_STATIC_ADMIN})"
+              DB_PASS="$(vault read -field=password ${DB_MOUNT}/static-creds/${ROLE_STATIC_ADMIN})"
               export PGPASSWORD="$DB_PASS"
               echo "🔎 Sanity check as $DB_USER"
               psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$APP_DB" -c "SELECT current_user, current_schema();"
           volumeMounts:
             - name: root-token
               mountPath: /vault-token
+              readOnly: true
+            - name: vault-bin
+              mountPath: /vault-bin
               readOnly: true
 
 ---

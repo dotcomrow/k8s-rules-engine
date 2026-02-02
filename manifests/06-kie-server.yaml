@@ -645,6 +645,10 @@ spec:
                   -g "kie-server,rest-all" \
                   -s >/dev/null 2>&1 || true
               fi
+              if [ -n "${JAVA_OPTS_APPEND:-}" ]; then
+                JAVA_OPTS="$JAVA_OPTS $JAVA_OPTS_APPEND"
+                export JAVA_OPTS
+              fi
 
               KIE_SERVER_USER="${KIE_SERVER_USER:-kieserver}"
               KIE_SERVER_PWD="${KIE_SERVER_PWD:-kieserver1!}"
@@ -1433,6 +1437,10 @@ spec:
               if [ -f /vault-secrets/oidc-env.sh ]; then
                 # shellcheck disable=SC1091
                 . /vault-secrets/oidc-env.sh
+              fi
+              if [ -n "${JAVA_OPTS_APPEND:-}" ]; then
+                JAVA_OPTS="$JAVA_OPTS $JAVA_OPTS_APPEND"
+                export JAVA_OPTS
               fi
               /opt/jboss/wildfly/bin/add-user.sh -a \
                 -u "$KIE_SERVER_USER" \

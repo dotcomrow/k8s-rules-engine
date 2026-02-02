@@ -352,6 +352,7 @@ spec:
 
               vault policy write "keycloak-admin-job" - <<'EOF'
               path "secret/data/keycloak/admin"                      { capabilities = ["read"] }
+              path "secret/data/keycloak-configurator-client-secret" { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-drools-workbench"  { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-drools-kie-server" { capabilities = ["read"] }
               path "secret/data/keycloak-client-secret-drools-kie-server" { capabilities = ["read"] }

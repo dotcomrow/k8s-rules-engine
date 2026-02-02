@@ -676,6 +676,11 @@ spec:
                 fi
               fi
 
+              if [ -n "${JAVA_OPTS_APPEND:-}" ]; then
+                JAVA_OPTS="$JAVA_OPTS $JAVA_OPTS_APPEND"
+                export JAVA_OPTS
+              fi
+
               EXTRA_LIBS_DIR="/workbench-extra-libs"
               BC_LIB_DIR="/opt/jboss/wildfly/standalone/deployments/business-central.war/WEB-INF/lib"
               if [ -d "$BC_LIB_DIR" ]; then

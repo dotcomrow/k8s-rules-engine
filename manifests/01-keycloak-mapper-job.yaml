@@ -57,6 +57,9 @@ spec:
                 exit 1
               fi
 
+              CONFIG_SECRET_JSON="$(vault kv get -format=json secret/keycloak-configurator-client-secret 2>/dev/null || true)"
+              CONFIG_CLIENT_SECRET="$(printf '%s' "$CONFIG_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+
               CONTROLLER_JSON="$(vault kv get -format=json secret/drools/admin)"
               CONTROLLER_USER="$(printf '%s' "$CONTROLLER_JSON" | jq -r '.data.data.username // empty')"
               CONTROLLER_PASS="$(printf '%s' "$CONTROLLER_JSON" | jq -r '.data.data.password // empty')"
@@ -112,6 +115,8 @@ spec:
               cat > /shared/keycloak-env.sh <<EOF
               export KEYCLOAK_ADMIN="${ADMIN_USER}"
               export KEYCLOAK_ADMIN_PASSWORD="${ADMIN_PASS}"
+              export KEYCLOAK_CONFIGURATOR_CLIENT_ID="keycloak-configurator"
+              export KEYCLOAK_CONFIGURATOR_CLIENT_SECRET="${CONFIG_CLIENT_SECRET}"
               export CONTROLLER_USER="${CONTROLLER_USER}"
               export CONTROLLER_PASSWORD="${CONTROLLER_PASS}"
               export WORKBENCH_CLIENT_ID="${CLIENT_ID}"
@@ -138,6 +143,8 @@ spec:
               REALM="internal"
               KCADM_BIN="/opt/keycloak/bin/kcadm.sh"
               KCADM="kcadm_safe"
+              CONFIG_CLIENT_ID="${KEYCLOAK_CONFIGURATOR_CLIENT_ID:-keycloak-configurator}"
+              CONFIG_CLIENT_SECRET="${KEYCLOAK_CONFIGURATOR_CLIENT_SECRET:-}"
               MAPPER_NAME="roles-claim"
               CLIENT_ROLE_MAPPER_NAME="client-roles-claim"
               ROLE_LIST="admin rest-all developer analyst manager process-admin user kie-server"
@@ -636,6 +643,13 @@ spec:
                 done
               }
               kcadm_login() {
+                if [ -n "${CONFIG_CLIENT_SECRET:-}" ]; then
+                  if "$KCADM_BIN" config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
+                    --client "$CONFIG_CLIENT_ID" --secret "$CONFIG_CLIENT_SECRET" >/dev/null 2>&1; then
+                    return 0
+                  fi
+                  echo "⚠️  Client credential login failed; falling back to admin user" >&2
+                fi
                 "$KCADM_BIN" config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
                   --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD"
               }

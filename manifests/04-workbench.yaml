@@ -9,6 +9,7 @@ metadata:
   namespace: drools
   annotations:
     argocd.argoproj.io/sync-options: Prune=false
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   accessModes: ["ReadWriteOnce"]
   storageClassName: longhorn
@@ -23,6 +24,7 @@ metadata:
   namespace: drools
   annotations:
     argocd.argoproj.io/sync-options: Prune=false
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   accessModes: ["ReadWriteOnce"]
   storageClassName: longhorn

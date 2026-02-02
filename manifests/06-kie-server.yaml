@@ -842,22 +842,32 @@ spec:
                 exit 1
               fi
 
+              TOKEN_WAIT_SECONDS="${TOKEN_WAIT_SECONDS:-300}"
+              TOKEN_WAIT_INTERVAL="${TOKEN_WAIT_INTERVAL:-5}"
               fetch_token() {
-                local token_json token
-                token_json="$(curl -fsS -X POST "${OIDC_AUTH_URL}/realms/${OIDC_REALM}/protocol/openid-connect/token" \
-                  -H "Content-Type: application/x-www-form-urlencoded" \
-                  --data-urlencode "grant_type=password" \
-                  --data-urlencode "client_id=${KIE_SERVER_CLIENT_ID}" \
-                  --data-urlencode "client_secret=${KIE_SERVER_CLIENT_SECRET}" \
-                  --data-urlencode "username=${KIE_SERVER_USER}" \
-                  --data-urlencode "password=${KIE_SERVER_PWD}" \
-                  || true)"
-                token="$(printf '%s' "$token_json" | sed -n 's/.*\"access_token\":\"\\([^\"]*\\)\".*/\\1/p')"
-                if [ -z "${token:-}" ]; then
-                  return 1
-                fi
-                KIE_TOKEN="$token"
-                return 0
+                local token_json token start now
+                start="$(date +%s)"
+                while true; do
+                  token_json="$(curl -fsS -X POST "${OIDC_AUTH_URL}/realms/${OIDC_REALM}/protocol/openid-connect/token" \
+                    -H "Content-Type: application/x-www-form-urlencoded" \
+                    --data-urlencode "grant_type=password" \
+                    --data-urlencode "client_id=${KIE_SERVER_CLIENT_ID}" \
+                    --data-urlencode "client_secret=${KIE_SERVER_CLIENT_SECRET}" \
+                    --data-urlencode "username=${KIE_SERVER_USER}" \
+                    --data-urlencode "password=${KIE_SERVER_PWD}" \
+                    || true)"
+                  token="$(printf '%s' "$token_json" | sed -n 's/.*\"access_token\":\"\\([^\"]*\\)\".*/\\1/p')"
+                  if [ -n "${token:-}" ]; then
+                    KIE_TOKEN="$token"
+                    return 0
+                  fi
+                  now="$(date +%s)"
+                  if [ $((now - start)) -ge "$TOKEN_WAIT_SECONDS" ]; then
+                    return 1
+                  fi
+                  echo "Waiting for Keycloak token..."
+                  sleep "$TOKEN_WAIT_INTERVAL"
+                done
               }
 
               if ! fetch_token; then
@@ -865,28 +875,7 @@ spec:
                 exit 1
               fi
               AUTH_HEADER="Authorization: Bearer ${KIE_TOKEN}"
-              K8S_API="https://kubernetes.default.svc"
-              SA_TOKEN="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
-              CA_CERT="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-              KIE_HOSTS=""
-              for i in $(seq 1 60); do
-                ENDPOINTS_JSON="$(curl -fsS --cacert "$CA_CERT" -H "Authorization: Bearer $SA_TOKEN" \
-                  "$K8S_API/api/v1/namespaces/drools/endpoints/kie-server" || true)"
-                if [ -n "$ENDPOINTS_JSON" ]; then
-                  KIE_HOSTS="$(printf '%s' "$ENDPOINTS_JSON" \
-                    | awk -F '"' '/"ip"[[:space:]]*:/ {print $(NF-1)}' \
-                    | sort -u)"
-                fi
-                if [ -n "${KIE_HOSTS:-}" ]; then
-                  break
-                fi
-                echo "Waiting for KIE server endpoints..."
-                sleep 5
-              done
-              if [ -z "${KIE_HOSTS:-}" ]; then
-                echo "ERROR: No KIE server endpoints found"
-                exit 1
-              fi
+              KIE_HOSTS="kie-server.drools.svc.cluster.local"
 
               parse_queries() {
                 awk '

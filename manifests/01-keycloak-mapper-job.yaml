@@ -419,7 +419,15 @@ spec:
 
                 echo "Enabling direct access grants for $client_id"
                 $KCADM update "clients/$client_uuid" -r "$REALM" \
-                  -s "directAccessGrantsEnabled=true"
+                  -s "directAccessGrantsEnabled=true" \
+                  -s "standardFlowEnabled=true" \
+                  -s "publicClient=false" \
+                  -s "bearerOnly=false"
+                grants="$($KCADM get "clients/$client_uuid" -r "$REALM" --fields directAccessGrantsEnabled --format csv | tr -d '\r\"' | tail -n1)"
+                if [ "$grants" != "true" ]; then
+                  echo "❌ direct access grants still disabled for $client_id"
+                  exit 1
+                fi
                 echo "Enabled direct access grants for $client_id"
               }
 

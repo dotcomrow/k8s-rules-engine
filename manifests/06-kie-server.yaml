@@ -778,30 +778,50 @@ spec:
               KIE_USER="$(vault kv get -field=username secret/drools/kie-user 2>/dev/null || true)"
               KIE_PASS="$(vault kv get -field=password secret/drools/kie-user 2>/dev/null || true)"
               if [ -z "${KIE_USER:-}" ] || [ -z "${KIE_PASS:-}" ]; then
-                echo "ERROR: Missing drools kie-user creds in Vault"
-                exit 1
+                echo "WARN: Missing drools kie-user creds in Vault"
               fi
+
+              KIE_SERVICE_CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-kie-server-service 2>/dev/null || true)"
+              KIE_SERVICE_CLIENT_ID="$(printf '%s' "$KIE_SERVICE_CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              KIE_SERVICE_CLIENT_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server-service 2>/dev/null || true)"
+              KIE_SERVICE_CLIENT_SECRET="$(printf '%s' "$KIE_SERVICE_CLIENT_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
 
               KIE_CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-kie-server 2>/dev/null || true)"
               KIE_CLIENT_ID="$(printf '%s' "$KIE_CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
               KIE_CLIENT_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server 2>/dev/null || true)"
               KIE_CLIENT_SECRET="$(printf '%s' "$KIE_CLIENT_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
-              if [ -z "${KIE_CLIENT_ID:-}" ] || [ -z "${KIE_CLIENT_SECRET:-}" ]; then
-                echo "ERROR: Missing Keycloak client credentials in Vault"
-                exit 1
-              fi
 
               OIDC_AUTH_URL="http://keycloak.keycloak.svc.cluster.local:8080"
               OIDC_REALM="internal"
+
+              TOKEN_GRANT=""
+              TOKEN_CLIENT_ID=""
+              TOKEN_CLIENT_SECRET=""
+              if [ -n "${KIE_SERVICE_CLIENT_ID:-}" ] && [ -n "${KIE_SERVICE_CLIENT_SECRET:-}" ]; then
+                TOKEN_GRANT="client_credentials"
+                TOKEN_CLIENT_ID="$KIE_SERVICE_CLIENT_ID"
+                TOKEN_CLIENT_SECRET="$KIE_SERVICE_CLIENT_SECRET"
+              elif [ -n "${KIE_USER:-}" ] && [ -n "${KIE_PASS:-}" ] && [ -n "${KIE_CLIENT_ID:-}" ] && [ -n "${KIE_CLIENT_SECRET:-}" ]; then
+                TOKEN_GRANT="password"
+                TOKEN_CLIENT_ID="$KIE_CLIENT_ID"
+                TOKEN_CLIENT_SECRET="$KIE_CLIENT_SECRET"
+              else
+                echo "ERROR: Missing Keycloak credentials in Vault (service client or user+client)"
+                exit 1
+              fi
+
               {
+                echo "export KIE_TOKEN_GRANT=\"$TOKEN_GRANT\""
+                echo "export KIE_TOKEN_CLIENT_ID=\"$TOKEN_CLIENT_ID\""
+                echo "export KIE_TOKEN_CLIENT_SECRET=\"$TOKEN_CLIENT_SECRET\""
+                echo "export KIE_TOKEN_USERNAME=\"$KIE_USER\""
+                echo "export KIE_TOKEN_PASSWORD=\"$KIE_PASS\""
                 echo "export KIE_SERVER_USER=\"$KIE_USER\""
                 echo "export KIE_SERVER_PWD=\"$KIE_PASS\""
-                echo "export KIE_SERVER_CLIENT_ID=\"$KIE_CLIENT_ID\""
-                echo "export KIE_SERVER_CLIENT_SECRET=\"$KIE_CLIENT_SECRET\""
                 echo "export OIDC_AUTH_URL=\"$OIDC_AUTH_URL\""
                 echo "export OIDC_REALM=\"$OIDC_REALM\""
               } > /vault-secrets/kie-users-env.sh
-              echo "OK: KIE user creds ready"
+              echo "OK: KIE query auth ready (${TOKEN_GRANT})"
           volumeMounts:
             - { name: vault-secrets, mountPath: /vault-secrets }
       containers:
@@ -852,29 +872,53 @@ spec:
               fi
               # shellcheck disable=SC1091
               . /vault-secrets/kie-users-env.sh
-              if [ -z "${OIDC_AUTH_URL:-}" ] || [ -z "${OIDC_REALM:-}" ] || [ -z "${KIE_SERVER_CLIENT_ID:-}" ] || [ -z "${KIE_SERVER_CLIENT_SECRET:-}" ]; then
+              if [ -z "${OIDC_AUTH_URL:-}" ] || [ -z "${OIDC_REALM:-}" ] || [ -z "${KIE_TOKEN_GRANT:-}" ] || [ -z "${KIE_TOKEN_CLIENT_ID:-}" ] || [ -z "${KIE_TOKEN_CLIENT_SECRET:-}" ]; then
                 echo "ERROR: Missing OIDC client settings in /vault-secrets/kie-users-env.sh"
                 exit 1
+              fi
+              if [ "$KIE_TOKEN_GRANT" = "password" ]; then
+                if [ -z "${KIE_TOKEN_USERNAME:-}" ] || [ -z "${KIE_TOKEN_PASSWORD:-}" ]; then
+                  echo "ERROR: Missing KIE token username or password for password grant"
+                  exit 1
+                fi
               fi
 
               TOKEN_WAIT_SECONDS="${TOKEN_WAIT_SECONDS:-300}"
               TOKEN_WAIT_INTERVAL="${TOKEN_WAIT_INTERVAL:-5}"
               fetch_token() {
-                local token_json token start now
+                local token start now resp body code
                 start="$(date +%s)"
                 while true; do
-                  token_json="$(curl -fsS -X POST "${OIDC_AUTH_URL}/realms/${OIDC_REALM}/protocol/openid-connect/token" \
-                    -H "Content-Type: application/x-www-form-urlencoded" \
-                    --data-urlencode "grant_type=password" \
-                    --data-urlencode "client_id=${KIE_SERVER_CLIENT_ID}" \
-                    --data-urlencode "client_secret=${KIE_SERVER_CLIENT_SECRET}" \
-                    --data-urlencode "username=${KIE_SERVER_USER}" \
-                    --data-urlencode "password=${KIE_SERVER_PWD}" \
-                    || true)"
-                  token="$(printf '%s' "$token_json" | sed -n 's/.*\"access_token\":\"\\([^\"]*\\)\".*/\\1/p')"
+                  if [ "$KIE_TOKEN_GRANT" = "client_credentials" ]; then
+                    resp="$(curl -sS -w '\n%{http_code}' -X POST "${OIDC_AUTH_URL}/realms/${OIDC_REALM}/protocol/openid-connect/token" \
+                      -H "Content-Type: application/x-www-form-urlencoded" \
+                      --data-urlencode "grant_type=client_credentials" \
+                      --data-urlencode "client_id=${KIE_TOKEN_CLIENT_ID}" \
+                      --data-urlencode "client_secret=${KIE_TOKEN_CLIENT_SECRET}" \
+                      || true)"
+                  else
+                    resp="$(curl -sS -w '\n%{http_code}' -X POST "${OIDC_AUTH_URL}/realms/${OIDC_REALM}/protocol/openid-connect/token" \
+                      -H "Content-Type: application/x-www-form-urlencoded" \
+                      --data-urlencode "grant_type=password" \
+                      --data-urlencode "client_id=${KIE_TOKEN_CLIENT_ID}" \
+                      --data-urlencode "client_secret=${KIE_TOKEN_CLIENT_SECRET}" \
+                      --data-urlencode "username=${KIE_TOKEN_USERNAME}" \
+                      --data-urlencode "password=${KIE_TOKEN_PASSWORD}" \
+                      || true)"
+                  fi
+                  body="$(printf '%s' "$resp" | sed '$d')"
+                  code="$(printf '%s' "$resp" | tail -n 1)"
+                  token="$(printf '%s' "$body" | sed -n 's/.*\"access_token\":\"\\([^\"]*\\)\".*/\\1/p')"
                   if [ -n "${token:-}" ]; then
                     KIE_TOKEN="$token"
                     return 0
+                  fi
+                  if [ -n "${code:-}" ] && [ "$code" != "200" ]; then
+                    echo "Token request failed (HTTP $code)"
+                    if [ -n "${body:-}" ]; then
+                      printf '%s\n' "$body" | head -c 400
+                      echo
+                    fi
                   fi
                   now="$(date +%s)"
                   if [ $((now - start)) -ge "$TOKEN_WAIT_SECONDS" ]; then
@@ -885,12 +929,27 @@ spec:
                 done
               }
 
-              if ! fetch_token; then
-                echo "ERROR: Unable to obtain Keycloak token"
-                exit 1
+              KIE_QUERY_FALLBACK_BASIC="${KIE_QUERY_FALLBACK_BASIC:-true}"
+              BASIC_AUTH_HEADER=""
+              if [ -n "${KIE_SERVER_USER:-}" ] && [ -n "${KIE_SERVER_PWD:-}" ]; then
+                BASIC_AUTH_HEADER="Authorization: Basic $(printf '%s:%s' "$KIE_SERVER_USER" "$KIE_SERVER_PWD" | base64)"
               fi
-              AUTH_HEADER="Authorization: Bearer ${KIE_TOKEN}"
+
+              AUTH_MODE="token"
+              if fetch_token; then
+                AUTH_HEADER="Authorization: Bearer ${KIE_TOKEN}"
+              else
+                if [ "$KIE_QUERY_FALLBACK_BASIC" = "true" ] && [ -n "${BASIC_AUTH_HEADER:-}" ]; then
+                  AUTH_MODE="basic"
+                  AUTH_HEADER="$BASIC_AUTH_HEADER"
+                else
+                  echo "ERROR: Unable to obtain Keycloak token"
+                  exit 1
+                fi
+              fi
               KIE_HOSTS="kie-server.drools.svc.cluster.local"
+              KIE_READY_WAIT_SECONDS="${KIE_READY_WAIT_SECONDS:-900}"
+              KIE_READY_WAIT_INTERVAL="${KIE_READY_WAIT_INTERVAL:-5}"
 
               parse_queries() {
                 awk '
@@ -935,29 +994,63 @@ spec:
                 name=$(printf '%s' "$item" | awk -F '"' '/"query-name"[[:space:]]*:/ {print $(NF-1)}')
                 for host in $KIE_HOSTS; do
                   KIE_SERVER_BASE="http://${host}:8080/kie-server/services/rest/server"
-                  for i in $(seq 1 60); do
+                  start="$(date +%s)"
+                  while true; do
                     code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" "$KIE_SERVER_BASE")
                     if [ "$code" = "401" ] || [ "$code" = "403" ]; then
-                      if fetch_token; then
-                        AUTH_HEADER="Authorization: Bearer ${KIE_TOKEN}"
-                        code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" "$KIE_SERVER_BASE")
+                      if [ "$AUTH_MODE" = "token" ]; then
+                        if fetch_token; then
+                          AUTH_HEADER="Authorization: Bearer ${KIE_TOKEN}"
+                          code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" "$KIE_SERVER_BASE")
+                        fi
+                        if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+                          if [ "$KIE_QUERY_FALLBACK_BASIC" = "true" ] && [ -n "${BASIC_AUTH_HEADER:-}" ]; then
+                            AUTH_MODE="basic"
+                            AUTH_HEADER="$BASIC_AUTH_HEADER"
+                            code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" "$KIE_SERVER_BASE")
+                          fi
+                        fi
                       fi
                     fi
                     if [ "$code" = "200" ]; then
                       break
                     fi
+                    now="$(date +%s)"
+                    if [ $((now - start)) -ge "$KIE_READY_WAIT_SECONDS" ]; then
+                      echo "ERROR: KIE server ${host} not ready"
+                      exit 1
+                    fi
                     echo "Waiting for KIE server ${host}... (HTTP $code)"
-                    sleep 5
+                    sleep "$KIE_READY_WAIT_INTERVAL"
                   done
-                  if [ "${code:-}" != "200" ]; then
-                    echo "ERROR: KIE server ${host} not ready"
-                    exit 1
-                  fi
                   http=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" \
                     -H "Content-Type: application/json" \
                     -H "X-KIE-ContentType: JSON" \
                     -X PUT "$KIE_SERVER_BASE/queries/definitions/$name" \
                     -d "$item")
+                  if [ "$http" = "401" ] || [ "$http" = "403" ]; then
+                    if [ "$AUTH_MODE" = "token" ]; then
+                      if fetch_token; then
+                        AUTH_HEADER="Authorization: Bearer ${KIE_TOKEN}"
+                        http=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" \
+                          -H "Content-Type: application/json" \
+                          -H "X-KIE-ContentType: JSON" \
+                          -X PUT "$KIE_SERVER_BASE/queries/definitions/$name" \
+                          -d "$item")
+                      fi
+                      if [ "$http" = "401" ] || [ "$http" = "403" ]; then
+                        if [ "$KIE_QUERY_FALLBACK_BASIC" = "true" ] && [ -n "${BASIC_AUTH_HEADER:-}" ]; then
+                          AUTH_MODE="basic"
+                          AUTH_HEADER="$BASIC_AUTH_HEADER"
+                          http=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" \
+                            -H "Content-Type: application/json" \
+                            -H "X-KIE-ContentType: JSON" \
+                            -X PUT "$KIE_SERVER_BASE/queries/definitions/$name" \
+                            -d "$item")
+                        fi
+                      fi
+                    fi
+                  fi
                   if [ "$http" != "200" ] && [ "$http" != "201" ]; then
                     payload_file="/tmp/query-${name}.json"
                     resp_headers="/tmp/query-${name}-headers.txt"

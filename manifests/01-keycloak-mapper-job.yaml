@@ -136,7 +136,8 @@ spec:
               KC_SERVER="http://keycloak.keycloak.svc.cluster.local:8080"
               ADMIN_REALM="master"
               REALM="internal"
-              KCADM="/opt/keycloak/bin/kcadm.sh"
+              KCADM_BIN="/opt/keycloak/bin/kcadm.sh"
+              KCADM="kcadm_safe"
               MAPPER_NAME="roles-claim"
               CLIENT_ROLE_MAPPER_NAME="client-roles-claim"
               ROLE_LIST="admin rest-all developer analyst manager process-admin user kie-server"
@@ -634,17 +635,40 @@ spec:
                   fi
                 done
               }
+              kcadm_login() {
+                "$KCADM_BIN" config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
+                  --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD"
+              }
+
+              kcadm_safe() {
+                local err
+                err="$(mktemp)"
+                if "$KCADM_BIN" "$@" 2> "$err"; then
+                  rm -f "$err"
+                  return 0
+                fi
+                if grep -qE "HTTP 401|HTTP 403|unauthorized|invalid_grant" "$err"; then
+                  echo "⚠️  kcadm auth failed; re-authenticating and retrying..." >&2
+                  kcadm_login >/dev/null 2>&1 || true
+                  if "$KCADM_BIN" "$@" 2>> "$err"; then
+                    rm -f "$err"
+                    return 0
+                  fi
+                fi
+                cat "$err" >&2
+                rm -f "$err"
+                return 1
+              }
+
               for i in $(seq 1 30); do
-                if $KCADM config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
-                  --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+                if kcadm_login >/dev/null 2>&1; then
                   break
                 fi
                 echo "⏳ Waiting for Keycloak admin API..."
                 sleep 5
               done
 
-              if ! $KCADM config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
-                --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+              if ! kcadm_login >/dev/null 2>&1; then
                 echo "❌ Unable to authenticate to Keycloak admin API"
                 exit 1
               fi

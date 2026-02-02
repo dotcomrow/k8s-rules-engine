@@ -642,16 +642,45 @@ spec:
                   fi
                 done
               }
-              kcadm_login() {
-                if [ -n "${CONFIG_CLIENT_SECRET:-}" ]; then
-                  if "$KCADM_BIN" config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
-                    --client "$CONFIG_CLIENT_ID" --secret "$CONFIG_CLIENT_SECRET" >/dev/null 2>&1; then
-                    return 0
-                  fi
-                  echo "⚠️  Client credential login failed; falling back to admin user" >&2
-                fi
+              KCADM_LAST_LOGIN=""
+              kcadm_login_admin() {
                 "$KCADM_BIN" config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
                   --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD"
+              }
+              kcadm_login_client() {
+                "$KCADM_BIN" config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
+                  --client "$CONFIG_CLIENT_ID" --secret "$CONFIG_CLIENT_SECRET"
+              }
+              kcadm_login() {
+                local prefer_admin="${KCADM_PREFER_ADMIN:-true}"
+                if [ "$prefer_admin" = "true" ]; then
+                  if [ -n "${KEYCLOAK_ADMIN:-}" ] && [ -n "${KEYCLOAK_ADMIN_PASSWORD:-}" ]; then
+                    if kcadm_login_admin >/dev/null 2>&1; then
+                      KCADM_LAST_LOGIN="admin"
+                      return 0
+                    fi
+                  fi
+                  if [ -n "${CONFIG_CLIENT_SECRET:-}" ]; then
+                    if kcadm_login_client >/dev/null 2>&1; then
+                      KCADM_LAST_LOGIN="client"
+                      return 0
+                    fi
+                  fi
+                else
+                  if [ -n "${CONFIG_CLIENT_SECRET:-}" ]; then
+                    if kcadm_login_client >/dev/null 2>&1; then
+                      KCADM_LAST_LOGIN="client"
+                      return 0
+                    fi
+                  fi
+                  if [ -n "${KEYCLOAK_ADMIN:-}" ] && [ -n "${KEYCLOAK_ADMIN_PASSWORD:-}" ]; then
+                    if kcadm_login_admin >/dev/null 2>&1; then
+                      KCADM_LAST_LOGIN="admin"
+                      return 0
+                    fi
+                  fi
+                fi
+                return 1
               }
 
               kcadm_safe() {
@@ -663,6 +692,16 @@ spec:
                 fi
                 if grep -qE "HTTP 401|HTTP 403|unauthorized|invalid_grant" "$err"; then
                   echo "⚠️  kcadm auth failed; re-authenticating and retrying..." >&2
+                  if [ "${KCADM_LAST_LOGIN:-}" = "client" ] && [ -n "${KEYCLOAK_ADMIN:-}" ] && [ -n "${KEYCLOAK_ADMIN_PASSWORD:-}" ]; then
+                    echo "⚠️  Retrying with admin credentials..." >&2
+                    if kcadm_login_admin >/dev/null 2>&1; then
+                      KCADM_LAST_LOGIN="admin"
+                      if "$KCADM_BIN" "$@" 2>> "$err"; then
+                        rm -f "$err"
+                        return 0
+                      fi
+                    fi
+                  fi
                   kcadm_login >/dev/null 2>&1 || true
                   if "$KCADM_BIN" "$@" 2>> "$err"; then
                     rm -f "$err"

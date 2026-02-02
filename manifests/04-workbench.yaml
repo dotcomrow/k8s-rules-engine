@@ -37,7 +37,6 @@ metadata:
   namespace: drools
   labels:
     app: kie-workbench
-    platform.suncoast.systems/vpa-exclude: "true"
   annotations:
     reloader.stakater.com/auto: "true"
 spec:
@@ -50,7 +49,6 @@ spec:
     metadata:
       labels:
         app: kie-workbench
-        platform.suncoast.systems/vpa-exclude: "true"
     spec:
       serviceAccountName: drools-workbench
       securityContext:
@@ -647,10 +645,6 @@ spec:
       containers:
         - name: kie-workbench
           image: quay.io/kiegroup/business-central-workbench-showcase:7.74.1.Final
-          resources:
-            requests:
-              cpu: "800m"
-              memory: "3Gi"
           command: ["/bin/bash", "-c"]
           args:
             - |
@@ -729,6 +723,8 @@ spec:
                 -Djboss.logging.level.org.keycloak.adapters=DEBUG
                 -Djboss.logging.level.org.keycloak.adapters.OAuthRequestAuthenticator=DEBUG
                 -Djboss.logging.level.org.keycloak=DEBUG
+                -Djboss.as.management.blocking.timeout=600
+                -Dorg.jboss.as.controller.blocking.timeout=600
             - name: DROOLS_VERSION
               value: "7.74.1.Final"
             - name: KIE_CONNECTION_URL

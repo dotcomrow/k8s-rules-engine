@@ -142,6 +142,7 @@ spec:
               ROLE_LIST="admin rest-all developer analyst manager process-admin user kie-server"
               WORKBENCH_PUBLIC_URL="https://workbench-drools.teleport.app.suncoast.systems"
               CONTROLLER_ROLE_LIST="admin rest-all kie-server"
+              KIE_SERVER_ROLE_LIST="admin rest-all kie-server"
               CONTROLLER_EMAIL="${CONTROLLER_EMAIL:-drools-controller@internal.local}"
               CONTROLLER_FIRST_NAME="${CONTROLLER_FIRST_NAME:-Drools}"
               CONTROLLER_LAST_NAME="${CONTROLLER_LAST_NAME:-Controller}"
@@ -441,6 +442,12 @@ spec:
                   exit 1
                 fi
 
+                current_secret="$($KCADM get "clients/$client_uuid/client-secret" -r "$REALM" --fields value --format csv | tr -d '\r\"' | tail -n1)"
+                if [ -n "$current_secret" ] && [ "$current_secret" = "$client_secret" ]; then
+                  echo "✅ Client secret already up to date for $client_id"
+                  return 0
+                fi
+
                 echo "🔁 Updating client secret for $client_id"
                 $KCADM update "clients/$client_uuid" -r "$REALM" \
                   -s "publicClient=false" \
@@ -683,7 +690,9 @@ spec:
 
               ensure_roles_mapper "$WORKBENCH_CLIENT_ID"
               ensure_roles_mapper "$KIE_SERVER_SERVICE_CLIENT_ID"
+              ensure_roles_mapper "$KIE_SERVER_CLIENT_ID"
               ensure_client_roles_mapper "$WORKBENCH_CLIENT_ID"
+              ensure_client_roles_mapper "$KIE_SERVER_CLIENT_ID"
               ensure_audience_mapper "$WORKBENCH_CLIENT_ID" "$KIE_SERVER_SERVICE_CLIENT_ID"
               ensure_audience_mapper "$WORKBENCH_CLIENT_ID" "$KIE_SERVER_CLIENT_ID"
               ensure_workbench_redirects "$WORKBENCH_CLIENT_ID"
@@ -702,6 +711,13 @@ spec:
                 exit 1
               fi
               ensure_client_roles "$WORKBENCH_CLIENT_UUID" "$CONTROLLER_ROLE_LIST"
+
+              KIE_SERVER_CLIENT_UUID="$(get_client_uuid "$KIE_SERVER_CLIENT_ID")"
+              if [ -z "$KIE_SERVER_CLIENT_UUID" ] || [ "$KIE_SERVER_CLIENT_UUID" = "id" ]; then
+                echo "❌ Keycloak client not found: $KIE_SERVER_CLIENT_ID"
+                exit 1
+              fi
+              ensure_client_roles "$KIE_SERVER_CLIENT_UUID" "$KIE_SERVER_ROLE_LIST"
 
               KIE_CLIENT_UUID=""
               while IFS= read -r line; do
@@ -778,5 +794,6 @@ spec:
               done
 
               assign_client_roles_to_user "$CONTROLLER_USER" "$WORKBENCH_CLIENT_ID" "$CONTROLLER_ROLE_LIST"
+              assign_client_roles_to_user "$KIE_SERVER_USER" "$KIE_SERVER_CLIENT_ID" "$KIE_SERVER_ROLE_LIST"
           volumeMounts:
             - { name: keycloak-admin-env, mountPath: /shared }

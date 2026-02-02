@@ -754,15 +754,33 @@ spec:
                 jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token))
               export VAULT_TOKEN
 
+              apk add --no-cache jq curl >/dev/null 2>&1
+
               KIE_USER="$(vault kv get -field=username secret/drools/kie-user 2>/dev/null || true)"
               KIE_PASS="$(vault kv get -field=password secret/drools/kie-user 2>/dev/null || true)"
               if [ -z "${KIE_USER:-}" ] || [ -z "${KIE_PASS:-}" ]; then
                 echo "ERROR: Missing drools kie-user creds in Vault"
                 exit 1
               fi
+
+              KIE_CLIENT_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-kie-server 2>/dev/null || true)"
+              KIE_CLIENT_ID="$(printf '%s' "$KIE_CLIENT_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              KIE_CLIENT_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server 2>/dev/null || true)"
+              KIE_CLIENT_SECRET="$(printf '%s' "$KIE_CLIENT_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+              if [ -z "${KIE_CLIENT_ID:-}" ] || [ -z "${KIE_CLIENT_SECRET:-}" ]; then
+                echo "ERROR: Missing Keycloak client credentials in Vault"
+                exit 1
+              fi
+
+              OIDC_AUTH_URL="http://keycloak.keycloak.svc.cluster.local:8080"
+              OIDC_REALM="internal"
               {
                 echo "export KIE_SERVER_USER=\"$KIE_USER\""
                 echo "export KIE_SERVER_PWD=\"$KIE_PASS\""
+                echo "export KIE_SERVER_CLIENT_ID=\"$KIE_CLIENT_ID\""
+                echo "export KIE_SERVER_CLIENT_SECRET=\"$KIE_CLIENT_SECRET\""
+                echo "export OIDC_AUTH_URL=\"$OIDC_AUTH_URL\""
+                echo "export OIDC_REALM=\"$OIDC_REALM\""
               } > /vault-secrets/kie-users-env.sh
               echo "OK: KIE user creds ready"
           volumeMounts:
@@ -815,6 +833,34 @@ spec:
               fi
               # shellcheck disable=SC1091
               . /vault-secrets/kie-users-env.sh
+              if [ -z "${OIDC_AUTH_URL:-}" ] || [ -z "${OIDC_REALM:-}" ] || [ -z "${KIE_SERVER_CLIENT_ID:-}" ] || [ -z "${KIE_SERVER_CLIENT_SECRET:-}" ]; then
+                echo "ERROR: Missing OIDC client settings in /vault-secrets/kie-users-env.sh"
+                exit 1
+              fi
+
+              fetch_token() {
+                local token_json token
+                token_json="$(curl -fsS -X POST "${OIDC_AUTH_URL}/realms/${OIDC_REALM}/protocol/openid-connect/token" \
+                  -H "Content-Type: application/x-www-form-urlencoded" \
+                  --data-urlencode "grant_type=password" \
+                  --data-urlencode "client_id=${KIE_SERVER_CLIENT_ID}" \
+                  --data-urlencode "client_secret=${KIE_SERVER_CLIENT_SECRET}" \
+                  --data-urlencode "username=${KIE_SERVER_USER}" \
+                  --data-urlencode "password=${KIE_SERVER_PWD}" \
+                  || true)"
+                token="$(printf '%s' "$token_json" | sed -n 's/.*\"access_token\":\"\\([^\"]*\\)\".*/\\1/p')"
+                if [ -z "${token:-}" ]; then
+                  return 1
+                fi
+                KIE_TOKEN="$token"
+                return 0
+              }
+
+              if ! fetch_token; then
+                echo "ERROR: Unable to obtain Keycloak token"
+                exit 1
+              fi
+              AUTH_HEADER="Authorization: Bearer ${KIE_TOKEN}"
               K8S_API="https://kubernetes.default.svc"
               SA_TOKEN="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
               CA_CERT="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
@@ -882,7 +928,13 @@ spec:
                 for host in $KIE_HOSTS; do
                   KIE_SERVER_BASE="http://${host}:8080/kie-server/services/rest/server"
                   for i in $(seq 1 60); do
-                    code=$(curl -s -o /dev/null -w "%{http_code}" -u "$KIE_SERVER_USER:$KIE_SERVER_PWD" "$KIE_SERVER_BASE")
+                    code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" "$KIE_SERVER_BASE")
+                    if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+                      if fetch_token; then
+                        AUTH_HEADER="Authorization: Bearer ${KIE_TOKEN}"
+                        code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" "$KIE_SERVER_BASE")
+                      fi
+                    fi
                     if [ "$code" = "200" ]; then
                       break
                     fi
@@ -893,7 +945,7 @@ spec:
                     echo "ERROR: KIE server ${host} not ready"
                     exit 1
                   fi
-                  http=$(curl -s -o /dev/null -w "%{http_code}" -u "$KIE_SERVER_USER:$KIE_SERVER_PWD" \
+                  http=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" \
                     -H "Content-Type: application/json" \
                     -H "X-KIE-ContentType: JSON" \
                     -X PUT "$KIE_SERVER_BASE/queries/definitions/$name" \
@@ -903,7 +955,7 @@ spec:
                     resp_headers="/tmp/query-${name}-headers.txt"
                     resp_body="/tmp/query-${name}-body.txt"
                     printf "%s\n" "$item" > "$payload_file"
-                    http=$(curl -s -w "%{http_code}" -o "$resp_body" -D "$resp_headers" -u "$KIE_SERVER_USER:$KIE_SERVER_PWD" \
+                    http=$(curl -s -w "%{http_code}" -o "$resp_body" -D "$resp_headers" -H "$AUTH_HEADER" \
                       -H "Content-Type: application/json" \
                       -H "X-KIE-ContentType: JSON" \
                       -X PUT "$KIE_SERVER_BASE/queries/definitions/$name" \
@@ -932,7 +984,8 @@ kind: Deployment
 metadata:
   name: kie-server
   namespace: drools
-  labels: { app: kie-server }
+  labels:
+    app: kie-server
   annotations:
     reloader.stakater.com/auto: "true"
     argocd.argoproj.io/sync-wave: "4"
@@ -942,7 +995,8 @@ spec:
     matchLabels: { app: kie-server }
   template:
     metadata:
-      labels: { app: kie-server }
+      labels:
+        app: kie-server
     spec:
       serviceAccountName: drools-kie-server
       volumes:
@@ -1026,7 +1080,7 @@ spec:
               echo "export OIDC_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
               echo 'export OIDC_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
-              echo "export OIDC_KIE_SERVER_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
+              echo "export OIDC_KIE_SERVER_AUTH_URL=\"http://keycloak.keycloak.svc.cluster.local:8080\"" >> "$OIDC_ENV_FILE"
               echo "export OIDC_KIE_SERVER_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
@@ -1400,8 +1454,16 @@ spec:
             - { containerPort: 8080 }
           env:
             - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0 -Dorg.drools.server.filter.classes=true -Dorg.kie.server.persistence.ds=java:jboss/datasources/KieServerDS -Dorg.kie.server.persistence.dialect=org.hibernate.dialect.PostgreSQLDialect -Dorg.jbpm.persistence.jpa.properties.hibernate.hbm2ddl.auto=validate -Dorg.jbpm.persistence.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true -Dorg.jbpm.query.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true -Dhibernate.jdbc.lob.non_contextual_creation=true" }
-            - { name: KIE_SERVER_ID,       value: "kie-server" }
-            - { name: KIE_SERVER_LOCATION, value: "http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server" }
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - { name: KIE_SERVER_ID,       value: "$(POD_NAME)" }
+            - { name: KIE_SERVER_LOCATION, value: "http://$(POD_IP):8080/kie-server/services/rest/server" }
             - { name: KIE_SERVER_CONTROLLER, value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller" }
             - { name: KIE_MAVEN_REPO,     value: "/opt/jboss/.m2/repository" }
             - { name: KIE_SERVER_EXTENSIONS, value: "BRM,DMN,BPM,CaseMgmt,Planner" }

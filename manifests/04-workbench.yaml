@@ -298,15 +298,15 @@ spec:
               KIE_USER_JSON="$(vault kv get -format=json secret/drools/kie-user 2>/dev/null || true)"
               KIE_USER="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.username // empty')"
               KIE_PASS="$(printf '%s' "$KIE_USER_JSON" | jq -r '.data.data.password // empty')"
-              if [ -z "${ADMIN_USER:-}" ] || [ -z "${ADMIN_PASS:-}" ] || [ -z "${KIE_USER:-}" ] || [ -z "${KIE_PASS:-}" ]; then
-                echo "Missing drools admin/kie-user creds in Vault"
+              if [ -z "${ADMIN_USER:-}" ] || [ -z "${ADMIN_PASS:-}" ]; then
+                echo "Missing drools admin creds in Vault"
                 exit 1
               fi
               {
                 echo "export KIE_SERVER_CONTROLLER_USER=\"$ADMIN_USER\""
                 echo "export KIE_SERVER_CONTROLLER_PWD=\"$ADMIN_PASS\""
-                echo "export KIE_SERVER_USER=\"$KIE_USER\""
-                echo "export KIE_SERVER_PWD=\"$KIE_PASS\""
+                echo "export KIE_SERVER_USER=\"$ADMIN_USER\""
+                echo "export KIE_SERVER_PWD=\"$ADMIN_PASS\""
               } > "$KIE_ENV_FILE"
           volumeMounts:
             - name: vault-secrets

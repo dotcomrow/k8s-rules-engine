@@ -42,9 +42,7 @@ data:
 
         location = / {
           access_log off;
-          add_header Content-Type "application/json; charset=utf-8" always;
-          add_header Cache-Control "no-cache" always;
-          return 200 '{"status":"healthy","services":{"business-central":"/business-central/","kie-server":"/kie-server/","health":"/health"},"individual_access":{"workbench":"https://workbench-drools.teleport.app.suncoast.systems/business-central/","kie-server":"https://kie-server-drools.teleport.app.suncoast.systems/"}}';
+          return 302 /business-central/;
         }
 
         # Long-poll/SSE for Errai bus needs long timeouts and no buffering.

@@ -732,6 +732,7 @@ spec:
                 -Djboss.logging.level.org.keycloak=DEBUG
                 -Djboss.as.management.blocking.timeout=600
                 -Dorg.jboss.as.controller.blocking.timeout=600
+                -Derrai.bus.enable_sse_support=false
             - name: DROOLS_VERSION
               value: "7.74.1.Final"
             - name: KIE_CONNECTION_URL

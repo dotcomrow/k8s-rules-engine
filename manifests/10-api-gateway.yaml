@@ -154,6 +154,15 @@ kind: Service
 metadata:
   name: drools-api-gateway
   namespace: drools
+  annotations:
+    teleport.dev/name: "drools-workbench"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "workbench-drools.teleport.app.suncoast.systems"
+    teleport.dev/description: "KIE Workbench - Business rules authoring and management interface"
+    teleport.dev/port: "8080"
+  labels:
+    teleport.dev/app: "drools-workbench"
+    teleport.dev/enroll: "true"
 spec:
   selector:
     app: api-gateway

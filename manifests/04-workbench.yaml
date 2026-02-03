@@ -779,17 +779,9 @@ kind: Service
 metadata:
   name: kie-workbench
   namespace: drools
-  annotations:
-    teleport.dev/name: "drools-workbench"
-    teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "workbench-drools.teleport.app.suncoast.systems"
-    teleport.dev/description: "KIE Workbench - Business rules authoring and management interface"
-    teleport.dev/port: "8080"
   labels:
     app.kubernetes.io/name: kie-workbench
     app.kubernetes.io/component: authoring
-    teleport.dev/app: "drools-workbench"
-    teleport.dev/enroll: "true"
 spec:
   selector:
     app: kie-workbench

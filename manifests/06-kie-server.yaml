@@ -753,9 +753,7 @@ spec:
           args:
             - |
               echo "Waiting for Job drools/keycloak-workbench-roles-claim to complete..."
-              KEYCLOAK_JOB_WAIT_SECONDS="${KEYCLOAK_JOB_WAIT_SECONDS:-600}"
               KEYCLOAK_JOB_WAIT_INTERVAL="${KEYCLOAK_JOB_WAIT_INTERVAL:-5}"
-              start="$(date +%s)"
               while true; do
                 if kubectl -n drools get job keycloak-workbench-roles-claim >/dev/null 2>&1; then
                   SUCC="$(kubectl -n drools get job keycloak-workbench-roles-claim -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
@@ -769,11 +767,6 @@ spec:
                   fi
                 else
                   echo "  └─ job not found yet..."
-                fi
-                now="$(date +%s)"
-                if [ $((now - start)) -ge "$KEYCLOAK_JOB_WAIT_SECONDS" ]; then
-                  echo "WARN: keycloak-workbench-roles-claim not found after ${KEYCLOAK_JOB_WAIT_SECONDS}s; continuing"
-                  break
                 fi
                 sleep "$KEYCLOAK_JOB_WAIT_INTERVAL"
               done
@@ -1204,9 +1197,7 @@ spec:
           args:
             - |
               echo "Waiting for Job drools/keycloak-workbench-roles-claim to complete..."
-              KEYCLOAK_JOB_WAIT_SECONDS="${KEYCLOAK_JOB_WAIT_SECONDS:-600}"
               KEYCLOAK_JOB_WAIT_INTERVAL="${KEYCLOAK_JOB_WAIT_INTERVAL:-5}"
-              start="$(date +%s)"
               while true; do
                 if kubectl -n drools get job keycloak-workbench-roles-claim >/dev/null 2>&1; then
                   SUCC="$(kubectl -n drools get job keycloak-workbench-roles-claim -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
@@ -1220,11 +1211,6 @@ spec:
                   fi
                 else
                   echo "  └─ job not found yet..."
-                fi
-                now="$(date +%s)"
-                if [ $((now - start)) -ge "$KEYCLOAK_JOB_WAIT_SECONDS" ]; then
-                  echo "WARN: keycloak-workbench-roles-claim not found after ${KEYCLOAK_JOB_WAIT_SECONDS}s; continuing"
-                  break
                 fi
                 sleep "$KEYCLOAK_JOB_WAIT_INTERVAL"
               done

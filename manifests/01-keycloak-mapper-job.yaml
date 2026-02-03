@@ -138,7 +138,32 @@ spec:
               set -euo pipefail
               . /shared/keycloak-env.sh
 
-              KC_SERVER="http://keycloak.keycloak.svc.cluster.local:8080"
+              resolve_host() {
+                local host="$1"
+                if [ -z "${host:-}" ]; then
+                  return 1
+                fi
+                if command -v getent >/dev/null 2>&1; then
+                  getent hosts "$host" >/dev/null 2>&1
+                  return $?
+                fi
+                if command -v nslookup >/dev/null 2>&1; then
+                  nslookup "$host" >/dev/null 2>&1
+                  return $?
+                fi
+                return 0
+              }
+              KC_INTERNAL_URL="${KEYCLOAK_INTERNAL_URL:-http://keycloak.keycloak.svc.cluster.local:8080}"
+              KC_EXTERNAL_URL="${KEYCLOAK_EXTERNAL_URL:-https://auth.suncoast.systems}"
+              if [ -n "${KEYCLOAK_ADMIN_URL:-}" ]; then
+                KC_SERVER="$KEYCLOAK_ADMIN_URL"
+              else
+                KC_SERVER="$KC_INTERNAL_URL"
+                KC_HOST="$(printf '%s' "$KC_INTERNAL_URL" | sed -E 's#^[a-zA-Z]+://([^/:]+).*#\1#')"
+                if ! resolve_host "$KC_HOST"; then
+                  KC_SERVER="$KC_EXTERNAL_URL"
+                fi
+              fi
               ADMIN_REALM="master"
               REALM="internal"
               KCADM_BIN="/opt/keycloak/bin/kcadm.sh"

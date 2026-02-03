@@ -797,7 +797,30 @@ spec:
               KIE_CLIENT_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server 2>/dev/null || true)"
               KIE_CLIENT_SECRET="$(printf '%s' "$KIE_CLIENT_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
 
-              OIDC_AUTH_URL="${OIDC_AUTH_URL:-http://keycloak.keycloak.svc.cluster.local:8080}"
+              resolve_host() {
+                local host="$1"
+                if [ -z "${host:-}" ]; then
+                  return 1
+                fi
+                if command -v getent >/dev/null 2>&1; then
+                  getent hosts "$host" >/dev/null 2>&1
+                  return $?
+                fi
+                if command -v nslookup >/dev/null 2>&1; then
+                  nslookup "$host" >/dev/null 2>&1
+                  return $?
+                fi
+                return 0
+              }
+              KEYCLOAK_INTERNAL_URL="${KEYCLOAK_INTERNAL_URL:-http://keycloak.keycloak.svc.cluster.local:8080}"
+              KEYCLOAK_EXTERNAL_URL="${KEYCLOAK_EXTERNAL_URL:-https://auth.suncoast.systems}"
+              if [ -z "${OIDC_AUTH_URL:-}" ]; then
+                OIDC_AUTH_URL="$KEYCLOAK_INTERNAL_URL"
+                OIDC_HOST="$(printf '%s' "$KEYCLOAK_INTERNAL_URL" | sed -E 's#^[a-zA-Z]+://([^/:]+).*#\1#')"
+                if ! resolve_host "$OIDC_HOST"; then
+                  OIDC_AUTH_URL="$KEYCLOAK_EXTERNAL_URL"
+                fi
+              fi
               OIDC_REALM="${OIDC_REALM:-internal}"
 
               TOKEN_GRANT=""
@@ -1159,6 +1182,20 @@ spec:
               - { key: persistence.xml, path: persistence.xml, mode: 0444 }
               - { key: query-definition-override.orm.xml, path: query-definition-override.orm.xml, mode: 0444 }
       initContainers:
+        - name: wait-for-keycloak-job
+          image: alpine/k8s:1.31.4
+          command: ["/bin/sh","-lc"]
+          args:
+            - |
+              echo "Waiting for Job drools/keycloak-workbench-roles-claim to complete..."
+              while true; do
+                if ! kubectl -n drools get job keycloak-workbench-roles-claim >/dev/null 2>&1; then
+                  echo "  └─ job not found yet..."; sleep 5; continue
+                fi
+                SUCC="$(kubectl -n drools get job keycloak-workbench-roles-claim -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
+                [ "$SUCC" -ge 1 ] && break
+                sleep 5
+              done
         - name: wait-for-config-job
           image: alpine/k8s:1.31.4
           command: ["/bin/sh","-lc"]
@@ -1202,13 +1239,35 @@ spec:
 
               OIDC_ENV_FILE="/shared/oidc-env.sh"
               : > "$OIDC_ENV_FILE"
-              OIDC_AUTH_URL="https://auth.suncoast.systems"
+              resolve_host() {
+                local host="$1"
+                if [ -z "${host:-}" ]; then
+                  return 1
+                fi
+                if command -v getent >/dev/null 2>&1; then
+                  getent hosts "$host" >/dev/null 2>&1
+                  return $?
+                fi
+                if command -v nslookup >/dev/null 2>&1; then
+                  nslookup "$host" >/dev/null 2>&1
+                  return $?
+                fi
+                return 0
+              }
+              KEYCLOAK_INTERNAL_URL="${KEYCLOAK_INTERNAL_URL:-http://keycloak.keycloak.svc.cluster.local:8080}"
+              KEYCLOAK_EXTERNAL_URL="${KEYCLOAK_EXTERNAL_URL:-https://auth.suncoast.systems}"
+              OIDC_AUTH_URL="${OIDC_AUTH_URL:-$KEYCLOAK_EXTERNAL_URL}"
               OIDC_REALM="internal"
+              OIDC_KIE_SERVER_AUTH_URL="${OIDC_KIE_SERVER_AUTH_URL:-$KEYCLOAK_INTERNAL_URL}"
+              OIDC_INTERNAL_HOST="$(printf '%s' "$KEYCLOAK_INTERNAL_URL" | sed -E 's#^[a-zA-Z]+://([^/:]+).*#\1#')"
+              if ! resolve_host "$OIDC_INTERNAL_HOST"; then
+                OIDC_KIE_SERVER_AUTH_URL="$OIDC_AUTH_URL"
+              fi
               echo "export OIDC_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
               echo "export OIDC_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
               echo 'export OIDC_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
-              echo "export OIDC_KIE_SERVER_AUTH_URL=\"http://keycloak.keycloak.svc.cluster.local:8080\"" >> "$OIDC_ENV_FILE"
+              echo "export OIDC_KIE_SERVER_AUTH_URL=\"$OIDC_KIE_SERVER_AUTH_URL\"" >> "$OIDC_ENV_FILE"
               echo "export OIDC_KIE_SERVER_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"

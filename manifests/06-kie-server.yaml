@@ -791,8 +791,8 @@ spec:
               KIE_CLIENT_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server 2>/dev/null || true)"
               KIE_CLIENT_SECRET="$(printf '%s' "$KIE_CLIENT_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
 
-              OIDC_AUTH_URL="http://keycloak.keycloak.svc.cluster.local:8080"
-              OIDC_REALM="internal"
+              OIDC_AUTH_URL="${OIDC_AUTH_URL:-http://keycloak.keycloak.svc.cluster.local:8080}"
+              OIDC_REALM="${OIDC_REALM:-internal}"
 
               TOKEN_GRANT=""
               TOKEN_CLIENT_ID=""
@@ -872,6 +872,8 @@ spec:
               fi
               # shellcheck disable=SC1091
               . /vault-secrets/kie-users-env.sh
+              OIDC_AUTH_URL="${OIDC_AUTH_URL:-http://keycloak.keycloak.svc.cluster.local:8080}"
+              OIDC_REALM="${OIDC_REALM:-internal}"
               if [ -z "${OIDC_AUTH_URL:-}" ] || [ -z "${OIDC_REALM:-}" ] || [ -z "${KIE_TOKEN_GRANT:-}" ] || [ -z "${KIE_TOKEN_CLIENT_ID:-}" ] || [ -z "${KIE_TOKEN_CLIENT_SECRET:-}" ]; then
                 echo "ERROR: Missing OIDC client settings in /vault-secrets/kie-users-env.sh"
                 exit 1
@@ -881,6 +883,25 @@ spec:
                   echo "ERROR: Missing KIE token username or password for password grant"
                   exit 1
                 fi
+              fi
+
+              DNS_WAIT_SECONDS="${DNS_WAIT_SECONDS:-120}"
+              DNS_WAIT_INTERVAL="${DNS_WAIT_INTERVAL:-3}"
+              OIDC_HOST="$(printf '%s' "$OIDC_AUTH_URL" | sed -E 's#^[a-zA-Z]+://([^/:]+).*#\\1#')"
+              if [ -n "${OIDC_HOST:-}" ]; then
+                start="$(date +%s)"
+                while true; do
+                  if getent hosts "$OIDC_HOST" >/dev/null 2>&1; then
+                    break
+                  fi
+                  now="$(date +%s)"
+                  if [ $((now - start)) -ge "$DNS_WAIT_SECONDS" ]; then
+                    echo "ERROR: DNS lookup failed for $OIDC_HOST after ${DNS_WAIT_SECONDS}s"
+                    exit 1
+                  fi
+                  echo "Waiting for DNS to resolve $OIDC_HOST..."
+                  sleep "$DNS_WAIT_INTERVAL"
+                done
               fi
 
               TOKEN_WAIT_SECONDS="${TOKEN_WAIT_SECONDS:-300}"

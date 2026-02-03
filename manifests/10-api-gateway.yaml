@@ -49,7 +49,7 @@ data:
 
         # Long-poll/SSE for Errai bus needs long timeouts and no buffering.
         location ~* ^/business-central/(in|out)\..*\.erraiBus$ {
-          proxy_pass http://kie_workbench/business-central/;
+          proxy_pass http://kie_workbench;
           proxy_http_version 1.1;
           proxy_set_header Connection "";
           proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr;

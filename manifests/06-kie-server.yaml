@@ -692,7 +692,7 @@ metadata:
   name: kie-server-register-queries
   namespace: drools
   annotations:
-    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-wave: "1"
 rules:
   - apiGroups: [""]
     resources: ["endpoints"]
@@ -708,7 +708,7 @@ metadata:
   name: kie-server-register-queries
   namespace: drools
   annotations:
-    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-wave: "1"
 subjects:
   - kind: ServiceAccount
     name: drools-kie-server

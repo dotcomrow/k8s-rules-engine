@@ -1,0 +1,274 @@
+# =========================
+# KIE Server Auth Proxy (Bearer token injection)
+# =========================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kie-server-location
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  # Toggle this to revert to direct Basic auth access:
+  # http://kie-server.drools.svc.cluster.local:8080/kie-server/services/rest/server
+  KIE_SERVER_LOCATION: "http://kie-server-auth-proxy.drools.svc.cluster.local:8080/kie-server/services/rest/server"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kie-server-auth-proxy-config
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  nginx.conf: |
+    worker_processes auto;
+    error_log /dev/stderr info;
+    pid /tmp/nginx.pid;
+    env KEYCLOAK_URL;
+    env KEYCLOAK_REALM;
+    env KEYCLOAK_CLIENT_ID;
+    env KEYCLOAK_CLIENT_SECRET;
+
+    events {
+      worker_connections 1024;
+    }
+
+    http {
+      lua_shared_dict token_cache 10m;
+      lua_shared_dict token_lock 1m;
+      resolver kube-dns.kube-system.svc.cluster.local valid=10s ipv6=off;
+      resolver_timeout 2s;
+      proxy_read_timeout 300s;
+      proxy_send_timeout 300s;
+      proxy_connect_timeout 5s;
+
+      server {
+        listen 8080;
+
+        location = /healthz {
+          return 200;
+        }
+
+        location / {
+          access_by_lua_block {
+            local http = require "resty.http"
+            local cjson = require "cjson.safe"
+            local lock = require "resty.lock"
+            local cache = ngx.shared.token_cache
+
+            local function fetch_token()
+              local keycloak_url = os.getenv("KEYCLOAK_URL")
+              local realm = os.getenv("KEYCLOAK_REALM") or "internal"
+              local client_id = os.getenv("KEYCLOAK_CLIENT_ID")
+              local client_secret = os.getenv("KEYCLOAK_CLIENT_SECRET")
+
+              if not keycloak_url or keycloak_url == "" then
+                return nil, "KEYCLOAK_URL is not set"
+              end
+              if not client_id or client_id == "" or not client_secret or client_secret == "" then
+                return nil, "KEYCLOAK_CLIENT_ID/SECRET missing"
+              end
+
+              local httpc = http.new()
+              httpc:set_timeout(3000)
+              local res, err = httpc:request_uri(
+                keycloak_url .. "/realms/" .. realm .. "/protocol/openid-connect/token",
+                {
+                  method = "POST",
+                  body = "grant_type=client_credentials&client_id=" .. ngx.escape_uri(client_id)
+                    .. "&client_secret=" .. ngx.escape_uri(client_secret),
+                  headers = { ["Content-Type"] = "application/x-www-form-urlencoded" },
+                }
+              )
+              if not res then
+                return nil, "token request failed: " .. (err or "unknown")
+              end
+              if res.status ~= 200 then
+                return nil, "token request status " .. res.status
+              end
+
+              local body = cjson.decode(res.body or "")
+              if not body or not body.access_token then
+                return nil, "token missing in response"
+              end
+
+              local expires = tonumber(body.expires_in) or 60
+              cache:set("access_token", body.access_token, expires)
+              cache:set("expires_at", ngx.now() + expires - 30, expires)
+              return body.access_token, nil
+            end
+
+            local function get_token()
+              local token = cache:get("access_token")
+              local exp = cache:get("expires_at") or 0
+              if token and exp > ngx.now() + 5 then
+                return token, nil
+              end
+
+              local l = lock:new("token_lock", { timeout = 5, exptime = 10 })
+              local elapsed, err = l:lock("token")
+              if not elapsed then
+                ngx.log(ngx.WARN, "token lock failed: ", err)
+                token = cache:get("access_token")
+                if token then
+                  return token, nil
+                end
+              end
+
+              token = cache:get("access_token")
+              exp = cache:get("expires_at") or 0
+              if token and exp > ngx.now() + 5 then
+                if l then l:unlock() end
+                return token, nil
+              end
+
+              local new_token, ferr = fetch_token()
+              if l then l:unlock() end
+              return new_token, ferr
+            end
+
+            local token, err = get_token()
+            if not token then
+              ngx.log(ngx.ERR, "failed to obtain token: ", err)
+              return ngx.exit(503)
+            end
+
+            ngx.req.set_header("Authorization", "Bearer " .. token)
+          }
+
+          proxy_set_header Host $host;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_http_version 1.1;
+          proxy_set_header Connection "";
+          proxy_pass http://kie-server.drools.svc.cluster.local:8080;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kie-server-auth-proxy
+  namespace: drools
+  labels:
+    app: kie-server-auth-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kie-server-auth-proxy
+  template:
+    metadata:
+      labels:
+        app: kie-server-auth-proxy
+    spec:
+      serviceAccountName: drools-kie-server
+      volumes:
+        - name: proxy-config
+          configMap:
+            name: kie-server-auth-proxy-config
+            items:
+              - { key: nginx.conf, path: nginx.conf, mode: 0444 }
+        - name: vault-secrets
+          emptyDir: {}
+      initContainers:
+        - name: vault-kie-proxy
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              apk add --no-cache jq curl
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+
+              VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
+                role=drools \
+                jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token))
+              export VAULT_TOKEN
+
+              resolve_host() {
+                local host="$1"
+                if [ -z "${host:-}" ]; then
+                  return 1
+                fi
+                if command -v getent >/dev/null 2>&1; then
+                  getent hosts "$host" >/dev/null 2>&1
+                  return $?
+                fi
+                if command -v nslookup >/dev/null 2>&1; then
+                  nslookup "$host" >/dev/null 2>&1
+                  return $?
+                fi
+                return 1
+              }
+
+              KEYCLOAK_INTERNAL_URL="${KEYCLOAK_INTERNAL_URL:-http://keycloak.keycloak.svc.cluster.local:8080}"
+              KEYCLOAK_EXTERNAL_URL="${KEYCLOAK_EXTERNAL_URL:-https://auth.suncoast.systems}"
+              KEYCLOAK_URL="$KEYCLOAK_INTERNAL_URL"
+              KC_HOST="$(printf '%s' "$KEYCLOAK_INTERNAL_URL" | sed -E 's#^[a-zA-Z]+://([^/:]+).*#\1#')"
+              if ! resolve_host "$KC_HOST"; then
+                KEYCLOAK_URL="$KEYCLOAK_EXTERNAL_URL"
+              fi
+
+              CLIENT_ID_JSON="$(vault kv get -format=json secret/keycloak-client-id-drools-kie-server-service 2>/dev/null || true)"
+              CLIENT_ID="$(printf '%s' "$CLIENT_ID_JSON" | jq -r '.data.data.value // .data.data.id // empty')"
+              CLIENT_SECRET_JSON="$(vault kv get -format=json secret/keycloak-client-secret-drools-kie-server-service 2>/dev/null || true)"
+              CLIENT_SECRET="$(printf '%s' "$CLIENT_SECRET_JSON" | jq -r '.data.data.value // .data.data.secret // empty')"
+
+              if [ -z "${CLIENT_ID:-}" ] || [ -z "${CLIENT_SECRET:-}" ]; then
+                echo "ERROR: Missing KIE server service client credentials in Vault"
+                exit 1
+              fi
+
+              {
+                echo "export KEYCLOAK_URL=\"${KEYCLOAK_URL}\""
+                echo "export KEYCLOAK_REALM=\"internal\""
+                echo "export KEYCLOAK_CLIENT_ID=\"${CLIENT_ID}\""
+                echo "export KEYCLOAK_CLIENT_SECRET=\"${CLIENT_SECRET}\""
+              } > /vault-secrets/proxy-env.sh
+          volumeMounts:
+            - { name: vault-secrets, mountPath: /vault-secrets }
+      containers:
+        - name: auth-proxy
+          image: openresty/openresty:1.25.3.1-2-alpine
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              . /vault-secrets/proxy-env.sh
+              exec openresty -g 'daemon off;' -c /etc/nginx/nginx.conf
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          volumeMounts:
+            - { name: proxy-config, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf }
+            - { name: vault-secrets, mountPath: /vault-secrets }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kie-server-auth-proxy
+  namespace: drools
+  labels:
+    app: kie-server-auth-proxy
+spec:
+  selector:
+    app: kie-server-auth-proxy
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

@@ -71,7 +71,7 @@ spec:
                   nslookup "$host" >/dev/null 2>&1
                   return $?
                 fi
-                return 0
+                return 1
               }
               WORKBENCH_CONTROLLER_URL="${WORKBENCH_CONTROLLER_URL:-http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller}"
               KEYCLOAK_INTERNAL_URL="${KEYCLOAK_INTERNAL_URL:-http://keycloak.keycloak.svc.cluster.local:8080}"

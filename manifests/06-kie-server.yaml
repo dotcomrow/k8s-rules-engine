@@ -819,7 +819,7 @@ spec:
                   nslookup "$host" >/dev/null 2>&1
                   return $?
                 fi
-                return 0
+                return 1
               }
               KEYCLOAK_INTERNAL_URL="${KEYCLOAK_INTERNAL_URL:-http://keycloak.keycloak.svc.cluster.local:8080}"
               KEYCLOAK_EXTERNAL_URL="${KEYCLOAK_EXTERNAL_URL:-https://auth.suncoast.systems}"
@@ -925,11 +925,32 @@ spec:
 
               DNS_WAIT_SECONDS="${DNS_WAIT_SECONDS:-120}"
               DNS_WAIT_INTERVAL="${DNS_WAIT_INTERVAL:-3}"
-              OIDC_HOST="$(printf '%s' "$OIDC_AUTH_URL" | sed -E 's#^[a-zA-Z]+://([^/:]+).*#\1#')"
-              if [ -n "${OIDC_HOST:-}" ]; then
+              HAS_RESOLVER="false"
+              if command -v getent >/dev/null 2>&1 || command -v nslookup >/dev/null 2>&1; then
+                HAS_RESOLVER="true"
+              fi
+              resolve_host() {
+                local host="$1"
+                if [ -z "${host:-}" ]; then
+                  return 1
+                fi
+                if command -v getent >/dev/null 2>&1; then
+                  getent hosts "$host" >/dev/null 2>&1
+                  return $?
+                fi
+                if command -v nslookup >/dev/null 2>&1; then
+                  nslookup "$host" >/dev/null 2>&1
+                  return $?
+                fi
+                return 1
+              }
+              OIDC_HOST="${OIDC_AUTH_URL#*://}"
+              OIDC_HOST="${OIDC_HOST%%/*}"
+              OIDC_HOST="${OIDC_HOST%%:*}"
+              if [ "$HAS_RESOLVER" = "true" ] && [ -n "${OIDC_HOST:-}" ] && ! resolve_host "$OIDC_HOST"; then
                 start="$(date +%s)"
                 while true; do
-                  if getent hosts "$OIDC_HOST" >/dev/null 2>&1; then
+                  if resolve_host "$OIDC_HOST"; then
                     break
                   fi
                   now="$(date +%s)"
@@ -1672,7 +1693,11 @@ spec:
                 fieldRef:
                   fieldPath: status.podIP
             - { name: KIE_SERVER_ID,       value: "$(POD_NAME)" }
-            - { name: KIE_SERVER_LOCATION, value: "http://$(POD_IP):8080/kie-server/services/rest/server" }
+            - name: KIE_SERVER_LOCATION
+              valueFrom:
+                configMapKeyRef:
+                  name: kie-server-location
+                  key: KIE_SERVER_LOCATION
             - { name: KIE_SERVER_CONTROLLER, value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller" }
             - { name: KIE_MAVEN_REPO,     value: "/opt/jboss/.m2/repository" }
             - { name: KIE_SERVER_EXTENSIONS, value: "BRM,DMN,BPM,CaseMgmt,Planner" }

@@ -90,7 +90,6 @@ All services are now configured with Teleport annotations for secure external ac
 | KIE Workbench | `drools-workbench` | `workbench.drools.yourdomain.com` | Business rules authoring GUI |
 | KIE Server | `drools-kie-server` | `kie-server.drools.yourdomain.com` | Rules execution API |
 | Kogito Decision API | `drools-kogito-decisions` | `kogito.drools.yourdomain.com` | Cloud-native decision API |
-| API Gateway | `drools-api-gateway` | `api.drools.yourdomain.com` | Unified web interface |
 | Kogito Jobs | `drools-kogito-jobs` | `jobs.drools.yourdomain.com` | Async job processing |
 | Data Index | `drools-kogito-data-index` | `monitoring.drools.yourdomain.com` | Monitoring & analytics |
 | Rules Service | `drools-rules-service` | `rules.drools.yourdomain.com` | Embeddable rules service |
@@ -143,7 +142,6 @@ tsh apps ls
 # Login to specific service
 tsh apps login drools-workbench
 tsh apps login drools-kogito-decisions
-tsh apps login drools-api-gateway
 
 # Access via browser
 tsh apps login drools-workbench && open https://workbench.drools.yourdomain.com
@@ -184,7 +182,7 @@ kubectl apply -f manifests/k8s-rules.engine.yaml
 ### 5. Test Access
 ```bash
 # Test internal connectivity
-kubectl port-forward -n drools svc/drools-api-gateway 8080:8080
+kubectl port-forward -n drools svc/kie-workbench 8080:8080
 
 # Access KIE Workbench
 curl -f http://localhost:8080/business-central/
@@ -229,7 +227,6 @@ For production deployment:
 ```bash
 kubectl scale deployment kie-server -n drools --replicas=3
 kubectl scale deployment kogito-decision-service -n drools --replicas=3
-kubectl scale deployment api-gateway -n drools --replicas=2
 ```
 
 ## Monitoring and Troubleshooting
@@ -240,12 +237,12 @@ All services provide health endpoints accessible through Teleport:
 
 ```bash
 # Via port-forward for testing
-kubectl port-forward -n drools svc/drools-api-gateway 8080:8080
+kubectl port-forward -n drools svc/kie-workbench 8080:8080
 
 # Health endpoints
-curl http://localhost:8080/health                    # API Gateway
-curl http://localhost:8080/decisions/q/health        # Kogito Decision Service
-curl http://localhost:8080/kie-server/services/rest/server # KIE Server
+curl http://localhost:8080/business-central/              # KIE Workbench
+kubectl port-forward -n drools svc/kie-server 8081:8080
+curl http://localhost:8081/kie-server/services/rest/server # KIE Server
 ```
 
 ### Database Connection Issues
@@ -274,7 +271,7 @@ kubectl get pods -n drools -l 'teleport.dev/app'
 kubectl get svc -n drools
 
 # Test internal service communication
-kubectl exec -n drools deployment/api-gateway -- curl -f http://kie-workbench:8080/business-central/
+kubectl exec -n drools deployment/kie-workbench -- curl -f http://kie-workbench:8080/business-central/
 ```
 
 ## Security Considerations

@@ -363,7 +363,7 @@ spec:
               EOF
 
               vault write auth/${AUTH_PATH}/role/drools \
-                bound_service_account_names="drools-workbench,drools-kie-server,drools-rules-service,drools-api-gateway" \
+                bound_service_account_names="drools-workbench,drools-kie-server,drools-rules-service" \
                 bound_service_account_namespaces="drools" \
                 policies="drools,${ROLE_STATIC_ADMIN}" \
                 ttl="48h"
@@ -471,12 +471,6 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: drools-rules-service
-  namespace: drools
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: drools-api-gateway
   namespace: drools
 ---
 apiVersion: v1

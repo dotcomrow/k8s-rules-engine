@@ -1,0 +1,76 @@
+# =========================
+# Cleanup deprecated api-gateway proxy
+# =========================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api-gateway-cleanup
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: api-gateway-cleanup
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "serviceaccounts"]
+    verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: api-gateway-cleanup
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+subjects:
+  - kind: ServiceAccount
+    name: api-gateway-cleanup
+    namespace: drools
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: api-gateway-cleanup
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: api-gateway-cleanup
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: disabled
+    spec:
+      serviceAccountName: api-gateway-cleanup
+      restartPolicy: Never
+      containers:
+        - name: cleanup
+          image: alpine/k8s:1.31.4
+          command: ["/bin/sh","-c"]
+          env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          args:
+            - |
+              set -euo pipefail
+              kubectl -n "$NAMESPACE" delete deployment api-gateway --ignore-not-found=true
+              kubectl -n "$NAMESPACE" delete service drools-api-gateway --ignore-not-found=true
+              kubectl -n "$NAMESPACE" delete configmap api-gateway-nginx-conf --ignore-not-found=true
+              kubectl -n "$NAMESPACE" delete serviceaccount drools-api-gateway --ignore-not-found=true

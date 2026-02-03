@@ -100,50 +100,30 @@ else
     echo -e "${YELLOW}⚠ KIE Server not fully ready ($KIE_SERVER_REPLICAS/$KIE_SERVER_DESIRED replicas)${NC}"
 fi
 
-# Check API Gateway
-echo -e "\n${BLUE}6. Checking API Gateway...${NC}"
-GATEWAY_REPLICAS=$(kubectl get deployment api-gateway -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-GATEWAY_DESIRED=$(kubectl get deployment api-gateway -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
-
-if [ "$GATEWAY_REPLICAS" = "$GATEWAY_DESIRED" ] && [ "$GATEWAY_REPLICAS" != "0" ]; then
-    echo -e "${GREEN}✓ API Gateway running ($GATEWAY_REPLICAS/$GATEWAY_DESIRED replicas)${NC}"
-else
-    echo -e "${YELLOW}⚠ API Gateway not fully ready ($GATEWAY_REPLICAS/$GATEWAY_DESIRED replicas)${NC}"
-fi
-
-# Test API connectivity
-echo -e "\n${BLUE}7. Testing API connectivity...${NC}"
-
-# Port forward to test
-echo -e "${YELLOW}Setting up port forward for testing...${NC}"
-kubectl port-forward -n "$NAMESPACE" svc/api-gateway 8080:8080 &
+# Test Workbench connectivity
+echo -e "\n${BLUE}6. Testing Workbench connectivity...${NC}"
+echo -e "${YELLOW}Setting up port forward for KIE Workbench...${NC}"
+kubectl port-forward -n "$NAMESPACE" svc/kie-workbench 8080:8080 &
 PORT_FORWARD_PID=$!
-
-# Wait for port forward
 sleep 5
-
-# Test health endpoint
-if curl -s -f http://localhost:8080/health &>/dev/null; then
-    echo -e "${GREEN}✓ API Gateway health check passed${NC}"
-else
-    echo -e "${RED}✗ API Gateway health check failed${NC}"
-fi
-
-# Test KIE Workbench availability
 if curl -s -f http://localhost:8080/business-central/ &>/dev/null; then
-    echo -e "${GREEN}✓ KIE Workbench accessible via gateway${NC}"
+    echo -e "${GREEN}✓ KIE Workbench reachable${NC}"
 else
-    echo -e "${YELLOW}⚠ KIE Workbench not accessible (may still be starting)${NC}"
+    echo -e "${YELLOW}⚠ KIE Workbench not reachable (may still be starting)${NC}"
 fi
+kill $PORT_FORWARD_PID &>/dev/null
 
 # Test KIE Server API
-if curl -s -f http://localhost:8080/kie-server/services/rest/server &>/dev/null; then
-    echo -e "${GREEN}✓ KIE Server API accessible${NC}"
+echo -e "\n${BLUE}7. Testing KIE Server API connectivity...${NC}"
+echo -e "${YELLOW}Setting up port forward for KIE Server...${NC}"
+kubectl port-forward -n "$NAMESPACE" svc/kie-server 8081:8080 &
+PORT_FORWARD_PID=$!
+sleep 5
+if curl -s -f http://localhost:8081/kie-server/services/rest/server &>/dev/null; then
+    echo -e "${GREEN}✓ KIE Server API reachable${NC}"
 else
-    echo -e "${YELLOW}⚠ KIE Server API not accessible${NC}"
+    echo -e "${YELLOW}⚠ KIE Server API not reachable (may still be starting)${NC}"
 fi
-
-# Clean up port forward
 kill $PORT_FORWARD_PID &>/dev/null
 
 # Show resource usage
@@ -162,12 +142,10 @@ echo -e "\n${YELLOW}Service Status:${NC}"
 echo -e "• YugabyteDB: $(kubectl get service yugabytedb -n "$NAMESPACE" &>/dev/null && echo -e "${GREEN}✓ Configured${NC}" || echo -e "${RED}✗ Not configured${NC}")"
 echo -e "• KIE Workbench: $([ "$KIE_WB_STATUS" = "Running" ] && echo -e "${GREEN}✓ Running${NC}" || echo -e "${RED}✗ $KIE_WB_STATUS${NC}")"
 echo -e "• KIE Server: $([ "$KIE_SERVER_REPLICAS" = "$KIE_SERVER_DESIRED" ] && [ "$KIE_SERVER_REPLICAS" != "0" ] && echo -e "${GREEN}✓ Ready${NC}" || echo -e "${YELLOW}⚠ $KIE_SERVER_REPLICAS/$KIE_SERVER_DESIRED${NC}")"
-echo -e "• API Gateway: $([ "$GATEWAY_REPLICAS" = "$GATEWAY_DESIRED" ] && [ "$GATEWAY_REPLICAS" != "0" ] && echo -e "${GREEN}✓ Ready${NC}" || echo -e "${YELLOW}⚠ $GATEWAY_REPLICAS/$GATEWAY_DESIRED${NC}")"
 
 echo -e "\n${YELLOW}Access URLs (with port-forward):${NC}"
 echo -e "• Rules Authoring: http://localhost:8080/business-central/ (admin/admin)"
-echo -e "• KIE Server API: http://localhost:8080/kie-server/services/rest/server"
-echo -e "• Health Check: http://localhost:8080/health"
+echo -e "• KIE Server API: http://localhost:8081/kie-server/services/rest/server"
 
 echo -e "\n${YELLOW}Vault Integration:${NC}"
 echo -e "• Database credentials: Dynamic (24h rotation)"
@@ -178,14 +156,13 @@ echo -e "• Initialization job: drools-yugabyte-config"
 echo -e "\n${YELLOW}Teleport Services Configured:${NC}"
 echo -e "• drools-workbench (KIE Workbench GUI)"
 echo -e "• drools-kie-server (Rules Execution API)"
-echo -e "• drools-api-gateway (Unified Interface)"
 echo -e "• drools-rules-service (Embedded Service)"
 
 echo -e "\n${YELLOW}Quick Commands:${NC}"
-echo -e "• Port forward: kubectl port-forward -n $NAMESPACE svc/api-gateway 8080:8080"
+echo -e "• Port forward (Workbench): kubectl port-forward -n $NAMESPACE svc/kie-workbench 8080:8080"
+echo -e "• Port forward (KIE Server): kubectl port-forward -n $NAMESPACE svc/kie-server 8081:8080"
 echo -e "• Check logs: kubectl logs -n $NAMESPACE deployment/kie-workbench -f"
 echo -e "• Scale services: kubectl scale -n $NAMESPACE deployment/kie-server --replicas=3"
-echo -e "• Restart service: kubectl rollout restart -n $NAMESPACE deployment/api-gateway"
 
 echo -e "\n${YELLOW}Troubleshooting:${NC}"
 if [ "$KIE_WB_STATUS" != "Running" ] || [ "$POSTGRES_STATUS" != "Running" ]; then

@@ -41,7 +41,6 @@ echo -e "\n${BLUE}2. Checking Docker image accessibility...${NC}"
 IMAGES=(
     "quay.io/kiegroup/business-central:latest"
     "quay.io/kiegroup/kie-server:latest"
-    "nginx:1.25-alpine"
 )
 
 for image in "${IMAGES[@]}"; do
@@ -52,7 +51,7 @@ done
 
 # Check Service Accounts
 echo -e "\n${BLUE}3. Checking Service Accounts...${NC}"
-SERVICE_ACCOUNTS=("drools-workbench" "drools-kie-server" "drools-api-gateway")
+SERVICE_ACCOUNTS=("drools-workbench" "drools-kie-server")
 
 for sa in "${SERVICE_ACCOUNTS[@]}"; do
     if kubectl get serviceaccount "$sa" -n "$NAMESPACE" &>/dev/null; then
@@ -101,20 +100,9 @@ else
     echo -e "${RED}✗ KIE Server is not running (Status: $KIE_SERVER_STATUS)${NC}"
 fi
 
-# Check API Gateway
-echo -e "\n${BLUE}6. Checking API Gateway...${NC}"
-GATEWAY_STATUS=$(kubectl get pods -n "$NAMESPACE" -l app=api-gateway -o jsonpath='{.items[*].status.phase}' 2>/dev/null || echo "NotFound")
-
-if [[ "$GATEWAY_STATUS" == *"Running"* ]]; then
-    RUNNING_COUNT=$(echo "$GATEWAY_STATUS" | tr ' ' '\n' | grep -c "Running" || echo "0")
-    echo -e "${GREEN}✓ API Gateway has $RUNNING_COUNT running pods${NC}"
-else
-    echo -e "${YELLOW}⚠ API Gateway status: $GATEWAY_STATUS${NC}"
-fi
-
 # Check Services
-echo -e "\n${BLUE}7. Checking Services...${NC}"
-SERVICES=("kie-workbench" "kie-server" "drools-api-gateway")
+echo -e "\n${BLUE}6. Checking Services...${NC}"
+SERVICES=("kie-workbench" "kie-server")
 
 for svc in "${SERVICES[@]}"; do
     if kubectl get service "$svc" -n "$NAMESPACE" &>/dev/null; then
@@ -130,8 +118,8 @@ for svc in "${SERVICES[@]}"; do
 done
 
 # Check Teleport annotations
-echo -e "\n${BLUE}8. Checking Teleport annotations...${NC}"
-TELEPORT_SERVICES=("kie-workbench" "kie-server" "drools-api-gateway")
+echo -e "\n${BLUE}7. Checking Teleport annotations...${NC}"
+TELEPORT_SERVICES=("kie-workbench" "kie-server")
 
 for svc in "${TELEPORT_SERVICES[@]}"; do
     TELEPORT_NAME=$(kubectl get service "$svc" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.teleport\.dev/name}' 2>/dev/null || echo "")
@@ -143,17 +131,7 @@ for svc in "${TELEPORT_SERVICES[@]}"; do
 done
 
 # Health check endpoints
-echo -e "\n${BLUE}9. Testing health endpoints...${NC}"
-
-# Test API Gateway health
-if kubectl get pods -n "$NAMESPACE" -l app=api-gateway | grep -q Running; then
-    echo -e "${YELLOW}Testing API Gateway health endpoint...${NC}"
-    if kubectl exec -n "$NAMESPACE" deployment/api-gateway -- wget -q -O- http://localhost:8080/health &>/dev/null; then
-        echo -e "${GREEN}✓ API Gateway health endpoint responding${NC}"
-    else
-        echo -e "${YELLOW}⚠ API Gateway health endpoint not responding${NC}"
-    fi
-fi
+echo -e "\n${BLUE}8. Testing health endpoints...${NC}"
 
 # Test KIE Workbench if ready
 if kubectl get pods -n "$NAMESPACE" -l app=kie-workbench | grep -q Running; then
@@ -179,7 +157,6 @@ echo -e "✓ All images are now publicly accessible without authentication"
 echo -e "\n${BLUE}Access URLs (when Teleport is configured):${NC}"
 echo -e "• KIE Workbench: https://workbench.drools.yourdomain.com"
 echo -e "• KIE Server: https://kie-server.drools.yourdomain.com"
-echo -e "• API Gateway: https://api.drools.yourdomain.com"
 
 echo -e "\n${BLUE}Next Steps:${NC}"
 echo -e "1. Apply the manifest: kubectl apply -f manifests/k8s-rules.engine.yaml"

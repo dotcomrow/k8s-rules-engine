@@ -238,6 +238,7 @@ spec:
           args:
             - |
               set -euo pipefail
+              apk add --no-cache lua-resty-http >/dev/null 2>&1
               . /vault-secrets/proxy-env.sh
               DNS_RESOLVER="$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf)"
               if [ -z "${DNS_RESOLVER:-}" ]; then

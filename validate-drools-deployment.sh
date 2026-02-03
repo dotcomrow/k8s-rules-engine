@@ -91,13 +91,20 @@ fi
 
 # Check KIE Server
 echo -e "\n${BLUE}5. Checking KIE Server...${NC}"
-KIE_SERVER_REPLICAS=$(kubectl get deployment kie-server -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-KIE_SERVER_DESIRED=$(kubectl get deployment kie-server -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+KIE_SERVER_KIND="deployment"
+if kubectl get statefulset kie-server -n "$NAMESPACE" >/dev/null 2>&1; then
+    KIE_SERVER_KIND="statefulset"
+    KIE_SERVER_REPLICAS=$(kubectl get statefulset kie-server -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    KIE_SERVER_DESIRED=$(kubectl get statefulset kie-server -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+else
+    KIE_SERVER_REPLICAS=$(kubectl get deployment kie-server -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    KIE_SERVER_DESIRED=$(kubectl get deployment kie-server -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+fi
 
 if [ "$KIE_SERVER_REPLICAS" = "$KIE_SERVER_DESIRED" ] && [ "$KIE_SERVER_REPLICAS" != "0" ]; then
-    echo -e "${GREEN}✓ KIE Server running ($KIE_SERVER_REPLICAS/$KIE_SERVER_DESIRED replicas)${NC}"
+    echo -e "${GREEN}✓ KIE Server running ($KIE_SERVER_REPLICAS/$KIE_SERVER_DESIRED replicas, $KIE_SERVER_KIND)${NC}"
 else
-    echo -e "${YELLOW}⚠ KIE Server not fully ready ($KIE_SERVER_REPLICAS/$KIE_SERVER_DESIRED replicas)${NC}"
+    echo -e "${YELLOW}⚠ KIE Server not fully ready ($KIE_SERVER_REPLICAS/$KIE_SERVER_DESIRED replicas, $KIE_SERVER_KIND)${NC}"
 fi
 
 # Test Workbench connectivity
@@ -162,7 +169,11 @@ echo -e "\n${YELLOW}Quick Commands:${NC}"
 echo -e "• Port forward (Workbench): kubectl port-forward -n $NAMESPACE svc/kie-workbench 8080:8080"
 echo -e "• Port forward (KIE Server): kubectl port-forward -n $NAMESPACE svc/kie-server 8081:8080"
 echo -e "• Check logs: kubectl logs -n $NAMESPACE deployment/kie-workbench -f"
-echo -e "• Scale services: kubectl scale -n $NAMESPACE deployment/kie-server --replicas=3"
+if [ "$KIE_SERVER_KIND" = "statefulset" ]; then
+    echo -e "• Scale services: kubectl scale -n $NAMESPACE statefulset/kie-server --replicas=3"
+else
+    echo -e "• Scale services: kubectl scale -n $NAMESPACE deployment/kie-server --replicas=3"
+fi
 
 echo -e "\n${YELLOW}Troubleshooting:${NC}"
 if [ "$KIE_WB_STATUS" != "Running" ] || [ "$POSTGRES_STATUS" != "Running" ]; then

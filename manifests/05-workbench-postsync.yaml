@@ -100,8 +100,42 @@ spec:
                 fi
               }
 
-              restart_deploy "kie-server" "10m"
-              restart_deploy "kie-workbench" "15m"
+              restart_workload() {
+                name="$1"
+                timeout="${2:-10m}"
+                if kubectl -n "$NAMESPACE" get statefulset "$name" >/dev/null 2>&1; then
+                  echo "Restarting statefulset/$name..."
+                  kubectl -n "$NAMESPACE" rollout restart "statefulset/$name"
+                  case "$timeout" in
+                    *h) timeout_seconds=$(( ${timeout%h} * 3600 )) ;;
+                    *m) timeout_seconds=$(( ${timeout%m} * 60 )) ;;
+                    *s) timeout_seconds=${timeout%s} ;;
+                    *)  timeout_seconds=$timeout ;;
+                  esac
+                  start_ts="$(date +%s)"
+                  while true; do
+                    desired="$(kubectl -n "$NAMESPACE" get statefulset "$name" -o jsonpath='{.spec.replicas}')"
+                    ready="$(kubectl -n "$NAMESPACE" get statefulset "$name" -o jsonpath='{.status.readyReplicas}')"
+                    desired="${desired:-0}"
+                    ready="${ready:-0}"
+                    if [ "$ready" -ge "$desired" ]; then
+                      echo "statefulset/$name ready ($ready/$desired)"
+                      break
+                    fi
+                    now_ts="$(date +%s)"
+                    if [ $((now_ts - start_ts)) -ge "$timeout_seconds" ]; then
+                      echo "Timed out waiting for statefulset/$name ($ready/$desired)"
+                      exit 1
+                    fi
+                    sleep 5
+                  done
+                  return 0
+                fi
+                restart_deploy "$name" "$timeout"
+              }
+
+              restart_workload "kie-server" "10m"
+              restart_workload "kie-workbench" "15m"
 
               if [ ! -s "$PROJECTS_JSON" ]; then
                 echo "No rules project imports configured; skipping."

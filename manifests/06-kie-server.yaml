@@ -753,13 +753,29 @@ spec:
           args:
             - |
               echo "Waiting for Job drools/keycloak-workbench-roles-claim to complete..."
+              KEYCLOAK_JOB_WAIT_SECONDS="${KEYCLOAK_JOB_WAIT_SECONDS:-600}"
+              KEYCLOAK_JOB_WAIT_INTERVAL="${KEYCLOAK_JOB_WAIT_INTERVAL:-5}"
+              start="$(date +%s)"
               while true; do
-                if ! kubectl -n drools get job keycloak-workbench-roles-claim >/dev/null 2>&1; then
-                  echo "  └─ job not found yet..."; sleep 5; continue
+                if kubectl -n drools get job keycloak-workbench-roles-claim >/dev/null 2>&1; then
+                  SUCC="$(kubectl -n drools get job keycloak-workbench-roles-claim -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
+                  FAIL="$(kubectl -n drools get job keycloak-workbench-roles-claim -o jsonpath='{.status.failed}' 2>/dev/null || true)"; FAIL="${FAIL:-0}"
+                  if [ "$SUCC" -ge 1 ]; then
+                    break
+                  fi
+                  if [ "$FAIL" -ge 1 ]; then
+                    echo "ERROR: keycloak-workbench-roles-claim job failed"
+                    exit 1
+                  fi
+                else
+                  echo "  └─ job not found yet..."
                 fi
-                SUCC="$(kubectl -n drools get job keycloak-workbench-roles-claim -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
-                [ "$SUCC" -ge 1 ] && break
-                sleep 5
+                now="$(date +%s)"
+                if [ $((now - start)) -ge "$KEYCLOAK_JOB_WAIT_SECONDS" ]; then
+                  echo "WARN: keycloak-workbench-roles-claim not found after ${KEYCLOAK_JOB_WAIT_SECONDS}s; continuing"
+                  break
+                fi
+                sleep "$KEYCLOAK_JOB_WAIT_INTERVAL"
               done
         - name: vault-kie-user
           image: hashicorp/vault:1.15.4
@@ -1188,13 +1204,29 @@ spec:
           args:
             - |
               echo "Waiting for Job drools/keycloak-workbench-roles-claim to complete..."
+              KEYCLOAK_JOB_WAIT_SECONDS="${KEYCLOAK_JOB_WAIT_SECONDS:-600}"
+              KEYCLOAK_JOB_WAIT_INTERVAL="${KEYCLOAK_JOB_WAIT_INTERVAL:-5}"
+              start="$(date +%s)"
               while true; do
-                if ! kubectl -n drools get job keycloak-workbench-roles-claim >/dev/null 2>&1; then
-                  echo "  └─ job not found yet..."; sleep 5; continue
+                if kubectl -n drools get job keycloak-workbench-roles-claim >/dev/null 2>&1; then
+                  SUCC="$(kubectl -n drools get job keycloak-workbench-roles-claim -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
+                  FAIL="$(kubectl -n drools get job keycloak-workbench-roles-claim -o jsonpath='{.status.failed}' 2>/dev/null || true)"; FAIL="${FAIL:-0}"
+                  if [ "$SUCC" -ge 1 ]; then
+                    break
+                  fi
+                  if [ "$FAIL" -ge 1 ]; then
+                    echo "ERROR: keycloak-workbench-roles-claim job failed"
+                    exit 1
+                  fi
+                else
+                  echo "  └─ job not found yet..."
                 fi
-                SUCC="$(kubectl -n drools get job keycloak-workbench-roles-claim -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
-                [ "$SUCC" -ge 1 ] && break
-                sleep 5
+                now="$(date +%s)"
+                if [ $((now - start)) -ge "$KEYCLOAK_JOB_WAIT_SECONDS" ]; then
+                  echo "WARN: keycloak-workbench-roles-claim not found after ${KEYCLOAK_JOB_WAIT_SECONDS}s; continuing"
+                  break
+                fi
+                sleep "$KEYCLOAK_JOB_WAIT_INTERVAL"
               done
         - name: wait-for-config-job
           image: alpine/k8s:1.31.4

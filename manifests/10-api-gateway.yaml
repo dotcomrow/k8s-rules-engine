@@ -47,6 +47,20 @@ data:
           return 200 '{"status":"healthy","services":{"business-central":"/business-central/","kie-server":"/kie-server/","health":"/health"},"individual_access":{"workbench":"https://workbench-drools.teleport.app.suncoast.systems/business-central/","kie-server":"https://kie-server-drools.teleport.app.suncoast.systems/"}}';
         }
 
+        # Long-poll/SSE for Errai bus needs long timeouts and no buffering.
+        location ~* ^/business-central/(in|out)\..*\.erraiBus$ {
+          proxy_pass http://kie_workbench/business-central/;
+          proxy_http_version 1.1;
+          proxy_set_header Connection "";
+          proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto https; proxy_set_header X-Forwarded-Host $host;
+          proxy_read_timeout 3600s; proxy_connect_timeout 60s; proxy_send_timeout 3600s;
+          proxy_buffering off; proxy_cache off; proxy_request_buffering off;
+          add_header Cache-Control "no-cache" always;
+          add_header Access-Control-Allow-Origin $cors_origin always; add_header Access-Control-Allow-Credentials $cors_creds always;
+        }
+
         location /business-central/ {
           if ($request_method = OPTIONS) {
             add_header Access-Control-Allow-Origin $cors_origin always;
@@ -63,7 +77,7 @@ data:
           proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto https; proxy_set_header X-Forwarded-Host $host;
-          proxy_read_timeout 300s; proxy_connect_timeout 60s; proxy_send_timeout 60s;
+          proxy_read_timeout 900s; proxy_connect_timeout 60s; proxy_send_timeout 900s;
           add_header X-Frame-Options DENY always; add_header X-Content-Type-Options nosniff always;
           add_header X-XSS-Protection "1; mode=block" always; add_header Referrer-Policy "strict-origin-when-cross-origin" always;
           add_header Access-Control-Allow-Origin $cors_origin always; add_header Access-Control-Allow-Credentials $cors_creds always;

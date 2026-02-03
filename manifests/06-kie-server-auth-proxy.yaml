@@ -38,7 +38,7 @@ data:
     http {
       lua_shared_dict token_cache 10m;
       lua_shared_dict token_lock 1m;
-      resolver kube-dns.kube-system.svc.cluster.local valid=10s ipv6=off;
+      resolver __DNS_RESOLVER__ valid=10s ipv6=off;
       resolver_timeout 2s;
       proxy_read_timeout 300s;
       proxy_send_timeout 300s;
@@ -239,6 +239,11 @@ spec:
             - |
               set -euo pipefail
               . /vault-secrets/proxy-env.sh
+              DNS_RESOLVER="$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf)"
+              if [ -z "${DNS_RESOLVER:-}" ]; then
+                DNS_RESOLVER="kube-dns.kube-system.svc.cluster.local"
+              fi
+              sed "s/__DNS_RESOLVER__/${DNS_RESOLVER}/g" /config/nginx.conf.template > /etc/nginx/nginx.conf
               exec openresty -g 'daemon off;' -c /etc/nginx/nginx.conf
           ports:
             - { name: http, containerPort: 8080 }
@@ -255,7 +260,7 @@ spec:
             timeoutSeconds: 2
             failureThreshold: 6
           volumeMounts:
-            - { name: proxy-config, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf }
+            - { name: proxy-config, mountPath: /config/nginx.conf.template, subPath: nginx.conf }
             - { name: vault-secrets, mountPath: /vault-secrets }
 ---
 apiVersion: v1

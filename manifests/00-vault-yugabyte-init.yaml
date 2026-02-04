@@ -428,6 +428,9 @@ rules:
     resources: ["deployments", "statefulsets"]
     resourceNames: ["kie-workbench", "kie-server"]
     verbs: ["get", "watch", "patch", "update"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

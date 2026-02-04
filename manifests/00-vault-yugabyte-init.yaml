@@ -425,7 +425,7 @@ metadata:
   namespace: drools
 rules:
   - apiGroups: ["apps"]
-    resources: ["deployments"]
+    resources: ["deployments", "statefulsets"]
     resourceNames: ["kie-workbench", "kie-server"]
     verbs: ["get", "watch", "patch", "update"]
 ---

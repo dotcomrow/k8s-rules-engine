@@ -7,13 +7,13 @@ metadata:
     argocd.argoproj.io/sync-wave: "9"
     argocd.argoproj.io/sync-options: Replace=true,Force=true
 spec:
-  backoffLimit: 1
+  backoffLimit: 3
   template:
     metadata:
       annotations:
         linkerd.io/inject: disabled
     spec:
-      restartPolicy: OnFailure
+      restartPolicy: Never
       serviceAccountName: drools-kie-server
       containers:
         - name: ensure-capabilities
@@ -121,8 +121,8 @@ spec:
                   "${WORKBENCH_CONTROLLER_URL}/management/servers/${id}")"
 
                 missing="$(printf '%s' "$tmpl" | jq -r --argjson add "$ADD_CAPS" '
-                  .capabilities = (.capabilities // [])
-                  | [ $add[] | select(. as $c | ((.capabilities | index($c)) | not)) ]
+                  (.capabilities // []) as $caps
+                  | [ $add[] | select(. as $c | ($caps | index($c)) == null) ]
                   | length
                 ')"
                 if [ "${missing:-0}" = "0" ]; then
@@ -133,7 +133,7 @@ spec:
                 updated="$(printf '%s' "$tmpl" | jq --argjson add "$ADD_CAPS" '
                   .capabilities = (.capabilities // [])
                   | reduce $add[] as $c (.;
-                      if (.capabilities | index($c)) then .
+                      if ((.capabilities | index($c)) != null) then .
                       else .capabilities += [$c]
                       end
                     )

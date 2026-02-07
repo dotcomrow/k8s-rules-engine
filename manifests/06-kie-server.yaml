@@ -436,7 +436,8 @@ spec:
           command: ["/bin/sh","-c"]
           args:
             - |
-              set -euo pipefail
+              set -eu
+              set -o pipefail 2>/dev/null || true
               export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
               VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
                 role=drools \
@@ -648,6 +649,16 @@ spec:
               if [ -n "${JAVA_OPTS_APPEND:-}" ]; then
                 JAVA_OPTS="$JAVA_OPTS $JAVA_OPTS_APPEND"
                 export JAVA_OPTS
+              fi
+
+              # The JPA overrides ConfigMap pins hbm2ddl.auto=validate (good for runtime).
+              # For the one-off schema init run we need Hibernate to create missing jBPM tables,
+              # so patch the copied persistence.xml to use a non-destructive mode.
+              PERSISTENCE_XML="/opt/jboss/wildfly/standalone/deployments/kie-server.war/WEB-INF/classes/jpa/META-INF/persistence.xml"
+              if [ -f "$PERSISTENCE_XML" ]; then
+                tmp="$(mktemp)"
+                sed 's/name="hibernate.hbm2ddl.auto" value="validate"/name="hibernate.hbm2ddl.auto" value="update"/' "$PERSISTENCE_XML" > "$tmp"
+                mv "$tmp" "$PERSISTENCE_XML"
               fi
 
               KIE_SERVER_USER="${KIE_SERVER_USER:-kieserver}"
@@ -902,6 +913,7 @@ spec:
                   done
                   echo "WARN: linkerd-proxy still running after shutdown"
                 fi
+                return 0
               }
               trap cleanup_proxy EXIT
               if [ ! -f /vault-secrets/kie-users-env.sh ]; then
@@ -988,7 +1000,8 @@ spec:
                   fi
                   body="$(printf '%s' "$resp" | sed '$d')"
                   code="$(printf '%s' "$resp" | tail -n 1)"
-                  token="$(printf '%s' "$body" | sed -n 's/.*\"access_token\":\"\\([^\"]*\\)\".*/\\1/p')"
+                  # Extract access_token from the JSON response (POSIX BRE capture group is \(...\)).
+                  token="$(printf '%s' "$body" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')"
                   if [ -n "${token:-}" ]; then
                     KIE_TOKEN="$token"
                     return 0
@@ -1031,7 +1044,53 @@ spec:
               KIE_READY_WAIT_SECONDS="${KIE_READY_WAIT_SECONDS:-900}"
               KIE_READY_WAIT_INTERVAL="${KIE_READY_WAIT_INTERVAL:-5}"
 
+              # Some KIE Server builds don't expose the query-definition REST API.
+              # If it's missing, skip this job successfully so the namespace can still come up cleanly.
+              set -- $KIE_HOSTS
+              if [ -z "${1:-}" ]; then
+                echo "ERROR: KIE_HOSTS is empty"
+                exit 1
+              fi
+              KIE_PROBE_HOST="$1"
+              KIE_SERVER_BASE="http://${KIE_PROBE_HOST}:8080/kie-server/services/rest/server"
+              start="$(date +%s)"
+              while true; do
+                code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" "$KIE_SERVER_BASE")
+                if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+                  if [ "$AUTH_MODE" = "token" ]; then
+                    if fetch_token; then
+                      AUTH_HEADER="Authorization: Bearer ${KIE_TOKEN}"
+                      code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" "$KIE_SERVER_BASE")
+                    fi
+                    if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+                      if [ "$KIE_QUERY_FALLBACK_BASIC" = "true" ] && [ -n "${BASIC_AUTH_HEADER:-}" ]; then
+                        AUTH_MODE="basic"
+                        AUTH_HEADER="$BASIC_AUTH_HEADER"
+                        code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" "$KIE_SERVER_BASE")
+                      fi
+                    fi
+                  fi
+                fi
+                if [ "$code" = "200" ]; then
+                  break
+                fi
+                now="$(date +%s)"
+                if [ $((now - start)) -ge "$KIE_READY_WAIT_SECONDS" ]; then
+                  echo "ERROR: KIE server ${KIE_PROBE_HOST} not ready"
+                  exit 1
+                fi
+                echo "Waiting for KIE server ${KIE_PROBE_HOST}... (HTTP $code)"
+                sleep "$KIE_READY_WAIT_INTERVAL"
+              done
+
+              query_api_code="$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" "$KIE_SERVER_BASE/queries/definitions" || true)"
+              if [ "$query_api_code" = "404" ]; then
+                echo "WARN: KIE server does not expose query definition API; skipping default query registration"
+                exit 0
+              fi
+
               parse_queries() {
+                # Emit each JSON object as a single line to keep /bin/sh compatibility (no read -d / $'...').
                 awk '
                   BEGIN { depth=0; inobj=0; obj="" }
                   {
@@ -1059,9 +1118,9 @@ spec:
                       if (depth == 0) {
                         sub(/,[[:space:]]*$/, "", line)
                       }
-                      obj = obj line "\n"
+                      obj = obj line
                       if (depth == 0) {
-                        printf "%s\x1e", obj
+                        print obj
                         obj=""
                         inobj=0
                       }
@@ -1070,8 +1129,14 @@ spec:
                 ' /queries/queries.json
               }
 
-              parse_queries | while IFS= read -r -d $'\x1e' item; do
-                name=$(printf '%s' "$item" | awk -F '"' '/"query-name"[[:space:]]*:/ {print $(NF-1)}')
+              parse_queries | while IFS= read -r item; do
+                name="$(printf '%s' "$item" | sed -n 's/.*"query-name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+                if [ -z "${name:-}" ]; then
+                  echo "ERROR: Unable to parse query-name from queries.json object"
+                  printf '%s\n' "$item" | head -c 400 || true
+                  echo
+                  exit 1
+                fi
                 for host in $KIE_HOSTS; do
                   KIE_SERVER_BASE="http://${host}:8080/kie-server/services/rest/server"
                   start="$(date +%s)"
@@ -1154,7 +1219,7 @@ spec:
                 done
               done
               echo "All default queries registered on all KIE server pods"
-              cleanup_proxy
+              cleanup_proxy || true
               sleep 2
           volumeMounts:
             - { name: vault-secrets, mountPath: /vault-secrets }
@@ -1763,7 +1828,7 @@ metadata:
     gravitee.io/definition-description: "Rules execution API"
     gravitee.io/definition-version: "latest-20260121-2"
     gravitee.io/definition-type: "HTTP"
-    gravitee.io/definition-openapi-url: "http://kie-server-openapi.drools.svc.cluster.local:8080/openapi.json"
+    gravitee.io/definition-openapi-url: "http://kie-server-auth-proxy.drools.svc.cluster.local:8080/kie-server/services/rest/server/swagger.json"
     gravitee.io/definition-context-path: "/kie-server"
     gravitee.io/definition-visibility: "PUBLIC"
     gravitee.io/definition-state: "STARTED"
@@ -1782,7 +1847,7 @@ metadata:
     gravitee.io/definition-properties: '{"tier":"internal","region":"cluster","token_exchange_url":"https://auth.suncoast.systems/realms/internal/protocol/openid-connect/token","token_exchange_client_id":"<path:secret/data/keycloak-client-id-drools-kie-server-service#value>","token_exchange_client_secret":"<path:secret/data/keycloak-client-secret-drools-kie-server-service#value>"}'
     gravitee.io/definition-resources: '[]'
     gravitee.io/definition-endpoint-groups: '[{"name":"default","type":"http-proxy","sharedConfiguration":{"http":{"version":"HTTP_1_1","connectTimeout":30000,"readTimeout":300000,"idleTimeout":300000,"keepAlive":true,"keepAliveTimeout":30000,"pipelining":false,"useCompression":false,"propagateClientAcceptEncoding":false,"followRedirects":false,"maxConcurrentConnections":20}},"services":{"healthCheck":{"enabled":true,"overrideConfiguration":true,"type":"http-health-check","configuration":{"schedule":"*/30 * * * * *","target":"/services/rest/server/healthcheck","method":"GET","overrideEndpointPath":false,"headers":[],"assertion":"{#response.status == 200}","successThreshold":2,"failureThreshold":2}}},"endpoints":[{"name":"kie-server-http","type":"http-proxy","inheritConfiguration":true,"weight":1,"configuration":{"target":"http://kie-server.drools.svc.cluster.local:8080/kie-server"},"secondary":false}]}]'
-    gravitee.io/definition-pages: '{"swagger":{"type":"SWAGGER","name":"openapi","published":true,"visibility":"PUBLIC","homepage":false,"source":{"type":"http-fetcher","configuration":{"url":"http://kie-server-openapi.drools.svc.cluster.local:8080/openapi.json","autoFetch":true,"fetchCron":"0 */5 * * * *","useSystemProxy":false}}}}'
+    gravitee.io/definition-pages: '{"swagger":{"type":"SWAGGER","name":"openapi","published":true,"visibility":"PUBLIC","homepage":false,"source":{"type":"http-fetcher","configuration":{"url":"http://kie-server-auth-proxy.drools.svc.cluster.local:8080/kie-server/services/rest/server/swagger.json","autoFetch":true,"fetchCron":"0 */5 * * * *","useSystemProxy":false}}}}'
     gravitee.io/definition-plans: '{"bearer-internal":{"name":"Bearer Token","description":"Bearer token (validated by JWT policy)","security":{"type":"KEY_LESS"},"status":"PUBLISHED","validation":"AUTO","type":"API","selectionRule":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Bearer \")}"}}'
     gravitee.io/definition-flows: '[{"name":"token-exchange","enabled":true,"request":[{"name":"mark-flow","policy":"transform-headers","enabled":true,"messageCondition":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Bearer \") && #context.attributes[\"service_token\"] == null}","configuration":{"addHeaders":[{"name":"X-Policy-Matched","value":"token-exchange"}]}},{"name":"keycloak-token-exchange","policy":"policy-http-callout","enabled":true,"description":"Exchange token to internal realm","messageCondition":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Bearer \") && #context.attributes[\"service_token\"] == null}","configuration":{"url":"{#properties[\"token_exchange_url\"]}","method":"POST","headers":[{"name":"Content-Type","value":"application/x-www-form-urlencoded"}],"body":"grant_type=urn:ietf:params:oauth:grant-type:token-exchange&client_id={#properties[\"token_exchange_client_id\"]}&client_secret={#properties[\"token_exchange_client_secret\"]}&subject_token={#request.headers[\"authorization\"][0].substring(7)}","exitOnError":false,"variables":[{"name":"exchanged_token","value":"{#calloutResponse != null && #calloutResponse.status == 200 ? #jsonPath(#calloutResponse.content, \"$.access_token\") : null}"},{"name":"exchange_callout_status","value":"{#calloutResponse != null ? #calloutResponse.status : -1}"}]}},{"name":"strip-auth-header","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchanged_token\"] != null && #context.attributes[\"exchanged_token\"].length() > 0}","configuration":{"removeHeaders":["Authorization","authorization"]}},{"name":"mark-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchanged_token\"] != null && #context.attributes[\"exchanged_token\"].length() > 0}","configuration":{"addHeaders":[{"name":"X-Exchanged-Token-Present","value":"true"}]}},{"name":"apply-exchanged-token","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchanged_token\"] != null && #context.attributes[\"exchanged_token\"].length() > 0}","configuration":{"addHeaders":[{"name":"Authorization","value":"Bearer {#context.attributes[\"exchanged_token\"]}"}]}},{"name":"validate-jwt","policy":"jwt","enabled":true,"messageCondition":"{#request.headers[\"authorization\"] != null && #request.headers[\"authorization\"].size() > 0 && #request.headers[\"authorization\"][0].startsWith(\"Bearer \")}","configuration":{"signature":"RSA_RS256","publicKeyResolver":"JWKS_URL","resolverParameter":"https://auth.suncoast.systems/realms/internal/protocol/openid-connect/certs","extractClaims":true,"userClaim":"preferred_username","propagateAuthHeader":true}}],"response":[{"name":"debug-token-exchange-callout","policy":"transform-headers","enabled":true,"messageCondition":"{#context.attributes[\"exchange_callout_status\"] != null}","configuration":{"addHeaders":[{"name":"X-Keycloak-Exchange-Callout-Status","value":"{#context.attributes[\"exchange_callout_status\"]}"}]}}]}]'
     gravitee.io/definition-response-templates: '{}'

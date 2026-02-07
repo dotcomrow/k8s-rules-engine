@@ -125,7 +125,10 @@ spec:
 
               gen_pass() {
                 # Use URL-safe characters to avoid Keycloak form decoding errors.
-                tr -dc 'A-Za-z0-9._~-' </dev/urandom | head -c 32
+                # With `set -o pipefail`, `tr | head` can exit non-zero due to SIGPIPE when
+                # `head` closes the pipe after reading enough bytes; that should not fail
+                # the job, so explicitly ignore pipeline failures here.
+                tr -dc 'A-Za-z0-9._~-' </dev/urandom | head -c 32 || true
               }
 
               is_urlsafe_pass() {

@@ -13,7 +13,14 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-NAMESPACE="drools"
+NAMESPACE="${NAMESPACE:-drools}"
+VAULT_NAMESPACE="${VAULT_NAMESPACE:-vault}"
+YUGABYTE_NAMESPACE="${YUGABYTE_NAMESPACE:-yugabyte}"
+YUGABYTE_YSQL_SVC="${YUGABYTE_YSQL_SVC:-yb-ysql}"
+YUGABYTE_YSQL_PORT="${YUGABYTE_YSQL_PORT:-5433}"
+
+YUGABYTE_SVC_OK="false"
+YUGABYTE_CONN_OK="false"
 
 echo -e "${BLUE}================================"
 echo -e "Drools Platform Validation"
@@ -39,8 +46,8 @@ fi
 echo -e "\n${BLUE}2. Checking Vault and YugabyteDB initialization...${NC}"
 
 # Check Vault root token copy job
-if kubectl get job copy-drools-vault-root-token -n vault &>/dev/null; then
-    JOB_STATUS=$(kubectl get job copy-drools-vault-root-token -n vault -o jsonpath='{.status.succeeded}')
+if kubectl get job copy-drools-vault-root-token -n "$VAULT_NAMESPACE" &>/dev/null; then
+    JOB_STATUS=$(kubectl get job copy-drools-vault-root-token -n "$VAULT_NAMESPACE" -o jsonpath='{.status.succeeded}')
     if [ "${JOB_STATUS:-0}" -ge 1 ]; then
         echo -e "${GREEN}✓ Vault root token copy job completed${NC}"
     else
@@ -51,13 +58,13 @@ else
 fi
 
 # Check YugabyteDB configuration job
-if kubectl get job drools-yugabyte-config -n vault &>/dev/null; then
-    JOB_STATUS=$(kubectl get job drools-yugabyte-config -n vault -o jsonpath='{.status.succeeded}')
+if kubectl get job drools-yugabyte-config -n "$VAULT_NAMESPACE" &>/dev/null; then
+    JOB_STATUS=$(kubectl get job drools-yugabyte-config -n "$VAULT_NAMESPACE" -o jsonpath='{.status.succeeded}')
     if [ "${JOB_STATUS:-0}" -ge 1 ]; then
         echo -e "${GREEN}✓ YugabyteDB configuration job completed${NC}"
     else
         echo -e "${YELLOW}⚠ YugabyteDB configuration job running or failed${NC}"
-        echo -e "${YELLOW}  Check job logs: kubectl logs -n vault job/drools-yugabyte-config${NC}"
+        echo -e "${YELLOW}  Check job logs: kubectl logs -n $VAULT_NAMESPACE job/drools-yugabyte-config${NC}"
     fi
 else
     echo -e "${RED}✗ YugabyteDB configuration job not found${NC}"
@@ -65,10 +72,36 @@ fi
 
 # Check YugabyteDB connectivity
 echo -e "\n${BLUE}3. Checking YugabyteDB database connectivity...${NC}"
-if kubectl exec -n drools deployment/kie-workbench -- nc -z yb-tserver-service.yugabyte.svc.cluster.local 5433 &>/dev/null; then
-    echo -e "${GREEN}✓ YugabyteDB connectivity successful${NC}"
+YUGABYTE_YSQL_HOST="${YUGABYTE_YSQL_SVC}.${YUGABYTE_NAMESPACE}.svc.cluster.local"
+if kubectl get service "$YUGABYTE_YSQL_SVC" -n "$YUGABYTE_NAMESPACE" &>/dev/null; then
+    YUGABYTE_SVC_OK="true"
 else
-    echo -e "${YELLOW}⚠ YugabyteDB connectivity test failed (may be normal if pods not ready)${NC}"
+    echo -e "${RED}✗ YugabyteDB service not found: $YUGABYTE_YSQL_SVC (namespace: $YUGABYTE_NAMESPACE)${NC}"
+fi
+
+DB_TEST_TARGET=""
+DB_TEST_CONTAINER=""
+if kubectl get deployment kie-workbench -n "$NAMESPACE" &>/dev/null; then
+    DB_TEST_TARGET="deployment/kie-workbench"
+    DB_TEST_CONTAINER="kie-workbench"
+elif kubectl get statefulset kie-server -n "$NAMESPACE" &>/dev/null; then
+    DB_TEST_TARGET="pod/kie-server-0"
+    DB_TEST_CONTAINER="kie-server"
+elif kubectl get deployment kie-server -n "$NAMESPACE" &>/dev/null; then
+    DB_TEST_TARGET="deployment/kie-server"
+    DB_TEST_CONTAINER="kie-server"
+fi
+
+if [ -n "$DB_TEST_TARGET" ]; then
+    # Use bash /dev/tcp so we don't depend on netcat being installed in the image.
+    if kubectl exec -n "$NAMESPACE" "$DB_TEST_TARGET" -c "$DB_TEST_CONTAINER" -- bash -c "timeout 3 bash -c '</dev/tcp/${YUGABYTE_YSQL_HOST}/${YUGABYTE_YSQL_PORT}'" &>/dev/null; then
+        YUGABYTE_CONN_OK="true"
+        echo -e "${GREEN}✓ YugabyteDB connectivity successful (${YUGABYTE_YSQL_HOST}:${YUGABYTE_YSQL_PORT})${NC}"
+    else
+        echo -e "${YELLOW}⚠ YugabyteDB connectivity test failed (${YUGABYTE_YSQL_HOST}:${YUGABYTE_YSQL_PORT})${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ Skipping YugabyteDB connectivity check (no Workbench/KIE Server workload found yet)${NC}"
 fi
 
 # Check KIE Workbench
@@ -110,7 +143,7 @@ fi
 # Test Workbench connectivity
 echo -e "\n${BLUE}6. Testing Workbench connectivity...${NC}"
 echo -e "${YELLOW}Setting up port forward for KIE Workbench...${NC}"
-kubectl port-forward -n "$NAMESPACE" svc/kie-workbench 8080:8080 &
+kubectl port-forward -n "$NAMESPACE" svc/kie-workbench 8080:8080 >/dev/null 2>&1 &
 PORT_FORWARD_PID=$!
 sleep 5
 if curl -s -f http://localhost:8080/business-central/ &>/dev/null; then
@@ -118,12 +151,13 @@ if curl -s -f http://localhost:8080/business-central/ &>/dev/null; then
 else
     echo -e "${YELLOW}⚠ KIE Workbench not reachable (may still be starting)${NC}"
 fi
-kill $PORT_FORWARD_PID &>/dev/null
+kill $PORT_FORWARD_PID &>/dev/null || true
+wait $PORT_FORWARD_PID 2>/dev/null || true
 
 # Test KIE Server API
 echo -e "\n${BLUE}7. Testing KIE Server API connectivity...${NC}"
 echo -e "${YELLOW}Setting up port forward for KIE Server...${NC}"
-kubectl port-forward -n "$NAMESPACE" svc/kie-server 8081:8080 &
+kubectl port-forward -n "$NAMESPACE" svc/kie-server 8081:8080 >/dev/null 2>&1 &
 PORT_FORWARD_PID=$!
 sleep 5
 if curl -s -f http://localhost:8081/kie-server/services/rest/server &>/dev/null; then
@@ -131,7 +165,8 @@ if curl -s -f http://localhost:8081/kie-server/services/rest/server &>/dev/null;
 else
     echo -e "${YELLOW}⚠ KIE Server API not reachable (may still be starting)${NC}"
 fi
-kill $PORT_FORWARD_PID &>/dev/null
+kill $PORT_FORWARD_PID &>/dev/null || true
+wait $PORT_FORWARD_PID 2>/dev/null || true
 
 # Show resource usage
 echo -e "\n${BLUE}8. Resource usage...${NC}"
@@ -146,7 +181,14 @@ echo -e "Validation Summary"
 echo -e "================================${NC}"
 
 echo -e "\n${YELLOW}Service Status:${NC}"
-echo -e "• YugabyteDB: $(kubectl get service yugabytedb -n "$NAMESPACE" &>/dev/null && echo -e "${GREEN}✓ Configured${NC}" || echo -e "${RED}✗ Not configured${NC}")"
+YUGABYTE_STATUS="${RED}✗ Not configured${NC}"
+if [ "$YUGABYTE_SVC_OK" = "true" ]; then
+    YUGABYTE_STATUS="${YELLOW}⚠ Service present${NC}"
+fi
+if [ "$YUGABYTE_CONN_OK" = "true" ]; then
+    YUGABYTE_STATUS="${GREEN}✓ Reachable${NC}"
+fi
+echo -e "• YugabyteDB: $YUGABYTE_STATUS"
 echo -e "• KIE Workbench: $([ "$KIE_WB_STATUS" = "Running" ] && echo -e "${GREEN}✓ Running${NC}" || echo -e "${RED}✗ $KIE_WB_STATUS${NC}")"
 echo -e "• KIE Server: $([ "$KIE_SERVER_REPLICAS" = "$KIE_SERVER_DESIRED" ] && [ "$KIE_SERVER_REPLICAS" != "0" ] && echo -e "${GREEN}✓ Ready${NC}" || echo -e "${YELLOW}⚠ $KIE_SERVER_REPLICAS/$KIE_SERVER_DESIRED${NC}")"
 
@@ -176,7 +218,7 @@ else
 fi
 
 echo -e "\n${YELLOW}Troubleshooting:${NC}"
-if [ "$KIE_WB_STATUS" != "Running" ] || [ "$POSTGRES_STATUS" != "Running" ]; then
+if [ "$KIE_WB_STATUS" != "Running" ] || [ "$YUGABYTE_CONN_OK" != "true" ]; then
     echo -e "• Check database connectivity and resources"
     echo -e "• Verify persistent volume claims: kubectl get pvc -n $NAMESPACE"
     echo -e "• Check pod events: kubectl describe pods -n $NAMESPACE"

@@ -498,17 +498,30 @@ spec:
                 echo "Waiting for DB..."
                 sleep 5
               done
-              CHECK_TABLE_SQL="SELECT 1 FROM information_schema.tables WHERE table_schema='${KIE_SERVER_DB_SCHEMA}' AND table_name='processinstancelog';"
-              # Some jBPM entities use explicit sequences; validate requires them to exist too.
-              CHECK_SEQ_SQL="SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind='S' AND n.nspname='${KIE_SERVER_DB_SCHEMA}' AND c.relname='attachment_id_seq';"
-              TABLE_EXISTS="$(psql -h "$KIE_SERVER_DB_HOST" -p "$KIE_SERVER_DB_PORT" -U "$KIE_SERVER_DB_USERNAME" -d "$KIE_SERVER_DB_NAME" -Atc "$CHECK_TABLE_SQL" || true)"
-              SEQ_EXISTS="$(psql -h "$KIE_SERVER_DB_HOST" -p "$KIE_SERVER_DB_PORT" -U "$KIE_SERVER_DB_USERNAME" -d "$KIE_SERVER_DB_NAME" -Atc "$CHECK_SEQ_SQL" || true)"
-              if [ "$TABLE_EXISTS" = "1" ] && [ "$SEQ_EXISTS" = "1" ]; then
+              # If we ever skip schema init on a partial schema, jBPM will fail to boot (no QueryDefinition API)
+              # and the register-default-queries job will have to skip/fail. Check a full, version-pinned set
+              # of expected tables + sequences so we don't get a false "schema is ready".
+              REQUIRED_TABLES="'attachment','audittaskimpl','bamtasksummary','booleanexpression','casefiledatalog','caseidinfo','caseroleassignmentlog','content','contextmappinginfo','correlationkeyinfo','correlationpropertyinfo','deadline','delegation_delegates','deploymentstore','email_header','errorinfo','escalation','eventtypes','executionerrorinfo','i18ntext','nodeinstancelog','notification','notification_bas','notification_email_header','notification_recipients','organizationalentity','peopleassignments_bas','peopleassignments_exclowners','peopleassignments_potowners','peopleassignments_recipients','peopleassignments_stakeholders','processinstanceinfo','processinstancelog','querydefinitionstore','reassignment','reassignment_potentialowners','requestinfo','sessioninfo','task','task_comment','taskdef','taskevent','taskvariableimpl','timermappinginfo','variableinstancelog','workiteminfo'"
+              REQUIRED_SEQS="'attachment_id_seq','audit_id_seq','bam_task_id_seq','booleanexpr_id_seq','case_file_data_log_id_seq','case_id_info_id_seq','case_role_assign_log_id_seq','comment_id_seq','content_id_seq','context_mapping_info_id_seq','correlation_key_id_seq','correlation_prop_id_seq','deadline_id_seq','deploy_store_id_seq','emailnotifhead_id_seq','error_info_id_seq','escalation_id_seq','exec_error_info_id_seq','i18ntext_id_seq','node_inst_log_id_seq','notification_id_seq','proc_inst_log_id_seq','process_instance_info_id_seq','query_def_id_seq','reassignment_id_seq','request_info_id_seq','sessioninfo_id_seq','task_def_id_seq','task_event_id_seq','task_id_seq','task_var_id_seq','timer_mapping_info_id_seq','var_inst_log_id_seq','workiteminfo_id_seq'"
+
+              MISSING_TABLES_SQL="WITH req(name) AS (SELECT unnest(ARRAY[${REQUIRED_TABLES}]::text[])) SELECT count(*) FROM req LEFT JOIN information_schema.tables t ON t.table_schema='${KIE_SERVER_DB_SCHEMA}' AND t.table_name=req.name WHERE t.table_name IS NULL;"
+              MISSING_SEQS_SQL="WITH req(name) AS (SELECT unnest(ARRAY[${REQUIRED_SEQS}]::text[])) SELECT count(*) FROM req LEFT JOIN information_schema.sequences s ON s.sequence_schema='${KIE_SERVER_DB_SCHEMA}' AND s.sequence_name=req.name WHERE s.sequence_name IS NULL;"
+              MISSING_TABLES="$(psql -h "$KIE_SERVER_DB_HOST" -p "$KIE_SERVER_DB_PORT" -U "$KIE_SERVER_DB_USERNAME" -d "$KIE_SERVER_DB_NAME" -Atc "$MISSING_TABLES_SQL")"
+              MISSING_SEQS="$(psql -h "$KIE_SERVER_DB_HOST" -p "$KIE_SERVER_DB_PORT" -U "$KIE_SERVER_DB_USERNAME" -d "$KIE_SERVER_DB_NAME" -Atc "$MISSING_SEQS_SQL")"
+              if [ "$MISSING_TABLES" = "0" ] && [ "$MISSING_SEQS" = "0" ]; then
                 echo "OK: Schema already initialized"
                 echo "ready" > /vault-secrets/schema-ready
               else
                 echo "Schema incomplete; will initialize"
-                echo "  └─ processinstancelog table: ${TABLE_EXISTS:-0}, attachment_id_seq sequence: ${SEQ_EXISTS:-0}"
+                echo "  └─ missing tables: ${MISSING_TABLES}, missing sequences: ${MISSING_SEQS}"
+                if [ "$MISSING_TABLES" != "0" ]; then
+                  echo "Missing tables:"
+                  psql -h "$KIE_SERVER_DB_HOST" -p "$KIE_SERVER_DB_PORT" -U "$KIE_SERVER_DB_USERNAME" -d "$KIE_SERVER_DB_NAME" -Atc "WITH req(name) AS (SELECT unnest(ARRAY[${REQUIRED_TABLES}]::text[])) SELECT req.name FROM req LEFT JOIN information_schema.tables t ON t.table_schema='${KIE_SERVER_DB_SCHEMA}' AND t.table_name=req.name WHERE t.table_name IS NULL ORDER BY req.name;" | sed 's/^/  - /'
+                fi
+                if [ "$MISSING_SEQS" != "0" ]; then
+                  echo "Missing sequences:"
+                  psql -h "$KIE_SERVER_DB_HOST" -p "$KIE_SERVER_DB_PORT" -U "$KIE_SERVER_DB_USERNAME" -d "$KIE_SERVER_DB_NAME" -Atc "WITH req(name) AS (SELECT unnest(ARRAY[${REQUIRED_SEQS}]::text[])) SELECT req.name FROM req LEFT JOIN information_schema.sequences s ON s.sequence_schema='${KIE_SERVER_DB_SCHEMA}' AND s.sequence_name=req.name WHERE s.sequence_name IS NULL ORDER BY req.name;" | sed 's/^/  - /'
+                fi
               fi
           volumeMounts:
             - { name: vault-secrets, mountPath: /vault-secrets }

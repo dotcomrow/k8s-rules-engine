@@ -409,10 +409,18 @@ spec:
               path "secret/data/drools/kie-user"                     { capabilities = ["read"] }
               EOF
 
-              vault write auth/${AUTH_PATH}/role/drools \
+              # Preserve any additional policies already attached to the shared 'drools' auth role
+              # (e.g. per-rules-app DB access policies), while ensuring required base policies exist.
+              ROLE_PATH="auth/${AUTH_PATH}/role/drools"
+              EXISTING_POLICIES="$(vault read -field=policies "${ROLE_PATH}" 2>/dev/null || true)"
+              MERGED_POLICIES="$(printf '%s,%s' "${EXISTING_POLICIES}" "drools,${ROLE_STATIC_ADMIN}" | tr ',' '\n' | \
+                sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | awk 'NF' | sort -u | \
+                awk 'BEGIN{first=1} { if(!first) printf \",\"; printf \"%s\", $0; first=0 } END{ print \"\" }')"
+
+              vault write "${ROLE_PATH}" \
                 bound_service_account_names="drools-workbench,drools-kie-server,drools-rules-service" \
                 bound_service_account_namespaces="drools" \
-                policies="drools,${ROLE_STATIC_ADMIN}" \
+                policies="${MERGED_POLICIES}" \
                 ttl="48h"
 
               vault write auth/${AUTH_PATH}/role/keycloak-admin-job \

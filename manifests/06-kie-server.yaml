@@ -498,13 +498,17 @@ spec:
                 echo "Waiting for DB..."
                 sleep 5
               done
-              CHECK_SQL="SELECT 1 FROM information_schema.tables WHERE table_schema='${KIE_SERVER_DB_SCHEMA}' AND table_name='processinstancelog';"
-              EXISTS="$(psql -h "$KIE_SERVER_DB_HOST" -p "$KIE_SERVER_DB_PORT" -U "$KIE_SERVER_DB_USERNAME" -d "$KIE_SERVER_DB_NAME" -Atc "$CHECK_SQL" || true)"
-              if [ "$EXISTS" = "1" ]; then
+              CHECK_TABLE_SQL="SELECT 1 FROM information_schema.tables WHERE table_schema='${KIE_SERVER_DB_SCHEMA}' AND table_name='processinstancelog';"
+              # Some jBPM entities use explicit sequences; validate requires them to exist too.
+              CHECK_SEQ_SQL="SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind='S' AND n.nspname='${KIE_SERVER_DB_SCHEMA}' AND c.relname='attachment_id_seq';"
+              TABLE_EXISTS="$(psql -h "$KIE_SERVER_DB_HOST" -p "$KIE_SERVER_DB_PORT" -U "$KIE_SERVER_DB_USERNAME" -d "$KIE_SERVER_DB_NAME" -Atc "$CHECK_TABLE_SQL" || true)"
+              SEQ_EXISTS="$(psql -h "$KIE_SERVER_DB_HOST" -p "$KIE_SERVER_DB_PORT" -U "$KIE_SERVER_DB_USERNAME" -d "$KIE_SERVER_DB_NAME" -Atc "$CHECK_SEQ_SQL" || true)"
+              if [ "$TABLE_EXISTS" = "1" ] && [ "$SEQ_EXISTS" = "1" ]; then
                 echo "OK: Schema already initialized"
                 echo "ready" > /vault-secrets/schema-ready
               else
-                echo "Schema not found; will initialize"
+                echo "Schema incomplete; will initialize"
+                echo "  └─ processinstancelog table: ${TABLE_EXISTS:-0}, attachment_id_seq sequence: ${SEQ_EXISTS:-0}"
               fi
           volumeMounts:
             - { name: vault-secrets, mountPath: /vault-secrets }
@@ -689,7 +693,7 @@ spec:
               wait "$PID" || true
               echo "Schema init complete"
           env:
-            - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0 -Dorg.drools.server.filter.classes=true -Dorg.kie.server.persistence.ds=java:jboss/datasources/KieServerDS -Dorg.kie.server.persistence.dialect=org.hibernate.dialect.PostgreSQLDialect -Dorg.jbpm.persistence.jpa.properties.hibernate.hbm2ddl.auto=create -Dorg.jbpm.persistence.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true -Dorg.jbpm.query.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true -Dhibernate.jdbc.lob.non_contextual_creation=true" }
+            - { name: JAVA_OPTS,           value: "-Xms256m -Xmx1024m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0 -Dorg.drools.server.filter.classes=true -Dorg.kie.server.persistence.ds=java:jboss/datasources/KieServerDS -Dorg.kie.server.persistence.dialect=org.hibernate.dialect.PostgreSQLDialect -Dorg.jbpm.persistence.jpa.properties.hibernate.hbm2ddl.auto=update -Dorg.jbpm.query.jpa.properties.hibernate.hbm2ddl.auto=update -Dorg.jbpm.persistence.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true -Dorg.jbpm.query.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true -Dhibernate.jdbc.lob.non_contextual_creation=true" }
             - { name: KIE_SERVER_EXTENSIONS, value: "BRM,DMN,BPM,CaseMgmt,Planner" }
           volumeMounts:
             - { name: kieserver-config, mountPath: /opt/jboss/wildfly/standalone/configuration }
@@ -898,7 +902,8 @@ spec:
                   esac
                 done
                 code="$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 -X POST "${admin_url}/shutdown" || true)"
-                if [ -n "${code:-}" ] && [ "$code" != "200" ] && [ "$code" != "202" ] && [ "$code" != "000" ]; then
+                # Linkerd edge builds sometimes return 404 on /shutdown even when configured; that's not fatal.
+                if [ -n "${code:-}" ] && [ "$code" != "200" ] && [ "$code" != "202" ] && [ "$code" != "404" ] && [ "$code" != "000" ]; then
                   echo "WARN: linkerd shutdown returned HTTP ${code}"
                 fi
                 if [ -n "${linkerd_pid}" ]; then
@@ -1044,8 +1049,9 @@ spec:
               KIE_READY_WAIT_SECONDS="${KIE_READY_WAIT_SECONDS:-900}"
               KIE_READY_WAIT_INTERVAL="${KIE_READY_WAIT_INTERVAL:-5}"
 
-              # Some KIE Server builds don't expose the query-definition REST API.
-              # If it's missing, skip this job successfully so the namespace can still come up cleanly.
+              # The query-definition REST API is provided by the jBPM KIE Server extension.
+              # If it's missing, either the extension isn't enabled or it failed to initialize (often DB schema/sequences).
+              # You can explicitly allow skipping this job with ALLOW_MISSING_QUERY_API=true.
               set -- $KIE_HOSTS
               if [ -z "${1:-}" ]; then
                 echo "ERROR: KIE_HOSTS is empty"
@@ -1083,10 +1089,16 @@ spec:
                 sleep "$KIE_READY_WAIT_INTERVAL"
               done
 
+              ALLOW_MISSING_QUERY_API="${ALLOW_MISSING_QUERY_API:-false}"
               query_api_code="$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" "$KIE_SERVER_BASE/queries/definitions" || true)"
               if [ "$query_api_code" = "404" ]; then
-                echo "WARN: KIE server does not expose query definition API; skipping default query registration"
-                exit 0
+                if [ "$ALLOW_MISSING_QUERY_API" = "true" ]; then
+                  echo "WARN: KIE server does not expose query definition API; skipping default query registration"
+                  exit 0
+                fi
+                echo "ERROR: KIE server query definition API not found (HTTP 404)."
+                echo "  This usually means the jBPM KIE Server extension did not initialize (check for missing DB schema/sequences)."
+                exit 1
               fi
 
               parse_queries() {

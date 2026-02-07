@@ -52,7 +52,7 @@ spec:
               KEYCLOAK_INTERNAL_URL="${KEYCLOAK_INTERNAL_URL:-http://keycloak.keycloak.svc.cluster.local:8080}"
               KEYCLOAK_EXTERNAL_URL="${KEYCLOAK_EXTERNAL_URL:-https://auth.suncoast.systems}"
               KEYCLOAK_BASE_URL="$KEYCLOAK_INTERNAL_URL"
-              KC_HOST="$(printf '%s' "$KEYCLOAK_INTERNAL_URL" | sed -E 's#^[a-zA-Z]+://([^/:]+).*#\\1#')"
+              KC_HOST="$(printf '%s' "$KEYCLOAK_INTERNAL_URL" | sed -E 's#^[a-zA-Z]+://([^/:]+).*#\1#')"
               if ! resolve_host "$KC_HOST"; then
                 KEYCLOAK_BASE_URL="$KEYCLOAK_EXTERNAL_URL"
               fi
@@ -149,4 +149,3 @@ spec:
                   *) echo "ERROR: Failed to update ${id} capabilities (HTTP ${code})"; exit 1 ;;
                 esac
               done
-

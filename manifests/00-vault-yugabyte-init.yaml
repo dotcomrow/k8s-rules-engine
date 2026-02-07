@@ -413,9 +413,15 @@ spec:
               # (e.g. per-rules-app DB access policies), while ensuring required base policies exist.
               ROLE_PATH="auth/${AUTH_PATH}/role/drools"
               EXISTING_POLICIES="$(vault read -field=policies "${ROLE_PATH}" 2>/dev/null || true)"
-              MERGED_POLICIES="$(printf '%s,%s' "${EXISTING_POLICIES}" "drools,${ROLE_STATIC_ADMIN}" | tr ',' '\n' | \
-                sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | awk 'NF' | sort -u | \
-                awk 'BEGIN{first=1} { if(!first) printf \",\"; printf \"%s\", $0; first=0 } END{ print \"\" }')"
+              MERGED_POLICIES="$(
+                {
+                  # Existing policies can be returned as a CSV, a space-separated list, or an array-like string.
+                  # Normalize everything to one policy name per line, then merge + de-dupe.
+                  printf '%s\n' "${EXISTING_POLICIES}" | tr ',[]"' '\n' | tr ' ' '\n'
+                  printf '%s\n' "drools" "${ROLE_STATIC_ADMIN}"
+                } | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | awk 'NF' | sort -u | \
+                  awk 'BEGIN{first=1} { if(!first) printf ","; printf "%s", $0; first=0 } END{ print "" }'
+              )"
 
               vault write "${ROLE_PATH}" \
                 bound_service_account_names="drools-workbench,drools-kie-server,drools-rules-service" \

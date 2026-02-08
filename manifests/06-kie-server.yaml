@@ -1597,10 +1597,10 @@ spec:
               echo "✅ Database credentials retrieved: user=$DB_USERNAME"
 
               # Optional: per-rules-app datasource credentials (server-managed datasource via JNDI).
-              # If the static-creds role doesn't exist yet, we skip it so the platform can still boot.
-              TOOL_USE_POLICY_JSON="$(vault read -format=json yugabyte-db/static-creds/tool-use-policy-yb-app 2>/dev/null || true)"
-              TOOL_USE_POLICY_DB_USERNAME="$(printf '%s' "${TOOL_USE_POLICY_JSON}" | jq -r '.data.username // empty' || true)"
-              TOOL_USE_POLICY_DB_PASSWORD="$(printf '%s' "${TOOL_USE_POLICY_JSON}" | jq -r '.data.password // empty' || true)"
+              # This app uses Vault KV (static creds) so there is no rotation on the KIE server side.
+              TOOL_USE_POLICY_JSON="$(vault kv get -format=json secret/tool-use-policy/db 2>/dev/null || true)"
+              TOOL_USE_POLICY_DB_USERNAME="$(printf '%s' "${TOOL_USE_POLICY_JSON}" | jq -r '.data.data.username // empty' || true)"
+              TOOL_USE_POLICY_DB_PASSWORD="$(printf '%s' "${TOOL_USE_POLICY_JSON}" | jq -r '.data.data.password // empty' || true)"
               if [ -n "${TOOL_USE_POLICY_DB_USERNAME:-}" ] && [ -n "${TOOL_USE_POLICY_DB_PASSWORD:-}" ]; then
                 TOOL_USE_POLICY_DB_URL="jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/rules_tool_use?currentSchema=tool_use&sslmode=disable"
                 {

@@ -1596,6 +1596,23 @@ spec:
               } > "$DB_ENV_FILE"
               echo "✅ Database credentials retrieved: user=$DB_USERNAME"
 
+              # Optional: per-rules-app datasource credentials (server-managed datasource via JNDI).
+              # If the static-creds role doesn't exist yet, we skip it so the platform can still boot.
+              TOOL_USE_POLICY_JSON="$(vault read -format=json yugabyte-db/static-creds/tool-use-policy-yb-app 2>/dev/null || true)"
+              TOOL_USE_POLICY_DB_USERNAME="$(printf '%s' "${TOOL_USE_POLICY_JSON}" | jq -r '.data.username // empty' || true)"
+              TOOL_USE_POLICY_DB_PASSWORD="$(printf '%s' "${TOOL_USE_POLICY_JSON}" | jq -r '.data.password // empty' || true)"
+              if [ -n "${TOOL_USE_POLICY_DB_USERNAME:-}" ] && [ -n "${TOOL_USE_POLICY_DB_PASSWORD:-}" ]; then
+                TOOL_USE_POLICY_DB_URL="jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/rules_tool_use?currentSchema=tool_use&sslmode=disable"
+                {
+                  echo "export TOOL_USE_POLICY_DB_USERNAME=\"$TOOL_USE_POLICY_DB_USERNAME\""
+                  echo "export TOOL_USE_POLICY_DB_PASSWORD=\"$TOOL_USE_POLICY_DB_PASSWORD\""
+                  echo "export TOOL_USE_POLICY_DB_URL=\"$TOOL_USE_POLICY_DB_URL\""
+                } >> "$DB_ENV_FILE"
+                echo "✅ Tool Use Policy DB credentials retrieved"
+              else
+                echo "ℹ️  Tool Use Policy DB creds not found; ToolUsePolicyDS will not be configured"
+              fi
+
               KIE_ENV_FILE="/shared/kie-users-env.sh"
               : > "$KIE_ENV_FILE"
               ADMIN_JSON="$(vault kv get -format=json secret/drools/admin 2>/dev/null || true)"
@@ -1720,6 +1737,15 @@ spec:
               if (outcome != success) of /subsystem=datasources/data-source=KieServerDS:read-resource
                 /subsystem=datasources/data-source=KieServerDS:add(jndi-name="java:jboss/datasources/KieServerDS", driver-name="postgresql", connection-url="${KIE_SERVER_DB_URL}", user-name="${KIE_SERVER_DB_USERNAME}", password="${KIE_SERVER_DB_PASSWORD}", min-pool-size=5, max-pool-size=20, enabled=true)
               end-if
+              EOF
+              if [ -n "${TOOL_USE_POLICY_DB_URL:-}" ] && [ -n "${TOOL_USE_POLICY_DB_USERNAME:-}" ] && [ -n "${TOOL_USE_POLICY_DB_PASSWORD:-}" ]; then
+              cat >> "$CLI" <<EOF
+              if (outcome != success) of /subsystem=datasources/data-source=ToolUsePolicyDS:read-resource
+                /subsystem=datasources/data-source=ToolUsePolicyDS:add(jndi-name="java:jboss/datasources/ToolUsePolicyDS", driver-name="postgresql", connection-url="${TOOL_USE_POLICY_DB_URL}", user-name="${TOOL_USE_POLICY_DB_USERNAME}", password="${TOOL_USE_POLICY_DB_PASSWORD}", min-pool-size=1, max-pool-size=5, enabled=true)
+              end-if
+              EOF
+              fi
+              cat >> "$CLI" <<EOF
               stop-embedded-server
               EOF
               /opt/jboss/wildfly/bin/jboss-cli.sh --file="$CLI"

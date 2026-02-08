@@ -51,6 +51,11 @@ spec:
     metadata:
       labels:
         app: kie-workbench
+      annotations:
+        # Business Central uses WildFly management (http-remoting on :9990) to populate the
+        # Deployments/Data Sources UI. Linkerd's proxying can break this loopback connection.
+        config.linkerd.io/skip-outbound-ports: "9990"
+        config.linkerd.io/skip-inbound-ports: "9990"
     spec:
       serviceAccountName: drools-workbench
       securityContext:

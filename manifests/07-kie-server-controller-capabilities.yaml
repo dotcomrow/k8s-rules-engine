@@ -112,31 +112,28 @@ spec:
               fi
               echo "Found server templates: ${TEMPLATE_IDS}"
 
-              # These capabilities are required for Task/Process screens to work (jBPM).
-              # The controller sometimes persists only RULE/PLANNING after an initial partial startup.
-              ADD_CAPS='["PROCESS","CASE","DMN"]'
+              # The KIE Server -> Controller registration payload advertises only the high-level
+              # controller capabilities (RULE/PLANNING/PROCESS). If the controller template is
+              # configured to expect additional capabilities (e.g. CASE/DMN), Workbench rejects the
+              # server connection with HTTP 400 and the Workbench UI will show the KIE servers as
+              # disconnected. Keep the template capabilities aligned with what KIE servers report.
+              #
+              # Note: DMN/CaseMgmt functionality is still available via the enabled KIE server
+              # extensions; they are not represented as separate controller capabilities here.
+              DESIRED_CAPS='["RULE","PLANNING","PROCESS"]'
 
               for id in $TEMPLATE_IDS; do
                 tmpl="$(curl -fsS -H "$AUTH_HEADER" -H "Accept: application/json" \
                   "${WORKBENCH_CONTROLLER_URL}/management/servers/${id}")"
 
-                missing="$(printf '%s' "$tmpl" | jq -r --argjson add "$ADD_CAPS" '
-                  (.capabilities // []) as $caps
-                  | [ $add[] | select(. as $c | ($caps | index($c)) == null) ]
-                  | length
-                ')"
-                if [ "${missing:-0}" = "0" ]; then
-                  echo "OK: ${id} capabilities already include PROCESS/CASE/DMN"
+                current_caps="$(printf '%s' "$tmpl" | jq -c '.capabilities // []')"
+                if [ "${current_caps:-[]}" = "${DESIRED_CAPS}" ]; then
+                  echo "OK: ${id} capabilities already set to ${DESIRED_CAPS}"
                   continue
                 fi
 
-                updated="$(printf '%s' "$tmpl" | jq --argjson add "$ADD_CAPS" '
-                  .capabilities = (.capabilities // [])
-                  | reduce $add[] as $c (.;
-                      if ((.capabilities | index($c)) != null) then .
-                      else .capabilities += [$c]
-                      end
-                    )
+                updated="$(printf '%s' "$tmpl" | jq --argjson desired "$DESIRED_CAPS" '
+                  .capabilities = $desired
                 ')"
 
                 code="$(curl -s -o /dev/null -w "%{http_code}" \

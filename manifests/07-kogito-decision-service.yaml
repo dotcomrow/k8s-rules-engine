@@ -1,3 +1,10 @@
 apiVersion: v1
-kind: List
-items: []
+kind: ConfigMap
+metadata:
+  name: kogito-decision-service-disabled
+  namespace: drools
+  annotations:
+    argocd.argoproj.io/sync-wave: "7"
+data:
+  status: "disabled"
+  reason: "Kogito decision service is intentionally not deployed in this environment."

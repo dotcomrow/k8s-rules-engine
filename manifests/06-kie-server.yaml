@@ -686,23 +686,33 @@ spec:
                 -Dorg.kie.server.pwd="${KIE_SERVER_PWD}" &
               PID="$!"
 
-              TIMEOUT=180
-              while [ "$TIMEOUT" -gt 0 ]; do
-                if /opt/jboss/wildfly/bin/jboss-cli.sh --connect --command=':read-attribute(name=server-state)' 2>/dev/null | grep -q running; then
+              READINESS_TIMEOUT_SECONDS=600
+              READINESS_START="$(date +%s)"
+              while true; do
+                if ! kill -0 "$PID" >/dev/null 2>&1; then
+                  echo "ERROR: WildFly exited before reaching running state"
+                  wait "$PID" || true
+                  exit 1
+                fi
+                # During bootstrap jboss-cli can take ~20s+ to connect; short timeouts can false-fail the schema job.
+                if timeout 30 /opt/jboss/wildfly/bin/jboss-cli.sh --connect --command=':read-attribute(name=server-state)' 2>/dev/null | grep -q running; then
                   break
                 fi
+                NOW="$(date +%s)"
+                if [ $((NOW - READINESS_START)) -ge "$READINESS_TIMEOUT_SECONDS" ]; then
+                  echo "ERROR: WildFly did not reach running state"
+                  kill "$PID" >/dev/null 2>&1 || true
+                  wait "$PID" || true
+                  exit 1
+                fi
                 sleep 5
-                TIMEOUT=$((TIMEOUT - 5))
               done
-              if [ "$TIMEOUT" -le 0 ]; then
-                echo "ERROR: WildFly did not reach running state"
-                kill "$PID" >/dev/null 2>&1 || true
-                exit 1
-              fi
 
               echo "Waiting for jBPM schema creation..."
               sleep 60
-              /opt/jboss/wildfly/bin/jboss-cli.sh --connect --command=':shutdown' || true
+              if kill -0 "$PID" >/dev/null 2>&1; then
+                timeout 30 /opt/jboss/wildfly/bin/jboss-cli.sh --connect --command=':shutdown' >/dev/null 2>&1 || kill "$PID" >/dev/null 2>&1 || true
+              fi
               wait "$PID" || true
               echo "Schema init complete"
           env:

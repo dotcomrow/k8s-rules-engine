@@ -43,6 +43,7 @@ metadata:
     reloader.stakater.com/auto: "true"
 spec:
   replicas: 1
+  progressDeadlineSeconds: 1800
   strategy:
     type: Recreate
   selector:

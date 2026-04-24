@@ -767,18 +767,27 @@ spec:
             - { name: workbench-extra-libs, mountPath: /workbench-extra-libs }
             - { name: workbench-niogit,  mountPath: /opt/jboss/.niogit }
             - { name: workbench-m2,      mountPath: /opt/jboss/.m2 }
+          startupProbe:
+            httpGet:
+              path: /business-central/
+              port: 8080
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 80
           readinessProbe:
-            tcpSocket: { port: 8080 }
-            initialDelaySeconds: 180
-            periodSeconds: 30
-            timeoutSeconds: 30
-            failureThreshold: 10
+            httpGet:
+              path: /business-central/
+              port: 8080
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 4
           livenessProbe:
-            tcpSocket: { port: 8080 }
-            initialDelaySeconds: 300
-            periodSeconds: 60
-            timeoutSeconds: 30
-            failureThreshold: 3
+            httpGet:
+              path: /business-central/
+              port: 8080
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 6
 
 ---
 apiVersion: v1

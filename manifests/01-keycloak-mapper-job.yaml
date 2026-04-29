@@ -167,6 +167,7 @@ spec:
               REALM="internal"
               KCADM_BIN="/opt/keycloak/bin/kcadm.sh"
               KCADM="kcadm_safe"
+              KCADM_TIMEOUT_SECONDS="${KCADM_TIMEOUT_SECONDS:-30}"
               CONFIG_CLIENT_ID="${KEYCLOAK_CONFIGURATOR_CLIENT_ID:-keycloak-configurator}"
               CONFIG_CLIENT_SECRET="${KEYCLOAK_CONFIGURATOR_CLIENT_SECRET:-}"
               MAPPER_NAME="roles-claim"
@@ -675,12 +676,19 @@ spec:
                 done
               }
               KCADM_LAST_LOGIN=""
+              run_kcadm_bin() {
+                if command -v timeout >/dev/null 2>&1; then
+                  timeout "$KCADM_TIMEOUT_SECONDS" "$KCADM_BIN" "$@"
+                else
+                  "$KCADM_BIN" "$@"
+                fi
+              }
               kcadm_login_admin() {
-                "$KCADM_BIN" config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
+                run_kcadm_bin config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
                   --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD"
               }
               kcadm_login_client() {
-                "$KCADM_BIN" config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
+                run_kcadm_bin config credentials --server "$KC_SERVER" --realm "$ADMIN_REALM" \
                   --client "$CONFIG_CLIENT_ID" --secret "$CONFIG_CLIENT_SECRET"
               }
               kcadm_login() {
@@ -718,7 +726,7 @@ spec:
               kcadm_safe() {
                 local err
                 err="$(mktemp)"
-                if "$KCADM_BIN" "$@" 2> "$err"; then
+                if run_kcadm_bin "$@" 2> "$err"; then
                   rm -f "$err"
                   return 0
                 fi
@@ -728,14 +736,14 @@ spec:
                     echo "⚠️  Retrying with admin credentials..." >&2
                     if kcadm_login_admin >/dev/null 2>&1; then
                       KCADM_LAST_LOGIN="admin"
-                      if "$KCADM_BIN" "$@" 2>> "$err"; then
+                      if run_kcadm_bin "$@" 2>> "$err"; then
                         rm -f "$err"
                         return 0
                       fi
                     fi
                   fi
                   kcadm_login >/dev/null 2>&1 || true
-                  if "$KCADM_BIN" "$@" 2>> "$err"; then
+                  if run_kcadm_bin "$@" 2>> "$err"; then
                     rm -f "$err"
                     return 0
                   fi

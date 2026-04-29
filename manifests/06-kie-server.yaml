@@ -686,7 +686,9 @@ spec:
                 -Dorg.kie.server.pwd="${KIE_SERVER_PWD}" &
               PID="$!"
 
-              READINESS_TIMEOUT_SECONDS=600
+              # Fresh schema creation can keep WildFly booting for more than 10 minutes.
+              # Give Hibernate enough time to finish before the job decides startup failed.
+              READINESS_TIMEOUT_SECONDS=1200
               READINESS_START="$(date +%s)"
               while true; do
                 if ! kill -0 "$PID" >/dev/null 2>&1; then

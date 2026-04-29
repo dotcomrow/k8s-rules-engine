@@ -43,7 +43,9 @@ metadata:
     reloader.stakater.com/auto: "true"
 spec:
   replicas: 1
-  progressDeadlineSeconds: 1800
+  # First boot can take longer than 30 minutes while Vault, OIDC, Maven, and
+  # Workbench initialization complete; ArgoCD blocks later waves if this trips.
+  progressDeadlineSeconds: 3600
   strategy:
     type: Recreate
   selector:

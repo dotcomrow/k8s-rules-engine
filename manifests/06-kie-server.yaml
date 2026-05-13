@@ -879,12 +879,8 @@ spec:
                 TOKEN_GRANT="client_credentials"
                 TOKEN_CLIENT_ID="$KIE_SERVICE_CLIENT_ID"
                 TOKEN_CLIENT_SECRET="$KIE_SERVICE_CLIENT_SECRET"
-              elif [ -n "${ADMIN_USER:-}" ] && [ -n "${ADMIN_PASS:-}" ] && [ -n "${KIE_CLIENT_ID:-}" ] && [ -n "${KIE_CLIENT_SECRET:-}" ]; then
-                TOKEN_GRANT="password"
-                TOKEN_CLIENT_ID="$KIE_CLIENT_ID"
-                TOKEN_CLIENT_SECRET="$KIE_CLIENT_SECRET"
               else
-                echo "ERROR: Missing Keycloak credentials in Vault (service client or user+client)"
+                echo "ERROR: Missing Keycloak service client credentials in Vault"
                 exit 1
               fi
 
@@ -892,8 +888,6 @@ spec:
                 echo "export KIE_TOKEN_GRANT=\"$TOKEN_GRANT\""
                 echo "export KIE_TOKEN_CLIENT_ID=\"$TOKEN_CLIENT_ID\""
                 echo "export KIE_TOKEN_CLIENT_SECRET=\"$TOKEN_CLIENT_SECRET\""
-                echo "export KIE_TOKEN_USERNAME=\"$ADMIN_USER\""
-                echo "export KIE_TOKEN_PASSWORD=\"$ADMIN_PASS\""
                 echo "export KIE_SERVER_USER=\"$ADMIN_USER\""
                 echo "export KIE_SERVER_PWD=\"$ADMIN_PASS\""
                 echo "export OIDC_AUTH_URL=\"$OIDC_AUTH_URL\""
@@ -958,13 +952,6 @@ spec:
                 echo "ERROR: Missing OIDC client settings in /vault-secrets/kie-users-env.sh"
                 exit 1
               fi
-              if [ "$KIE_TOKEN_GRANT" = "password" ]; then
-                if [ -z "${KIE_TOKEN_USERNAME:-}" ] || [ -z "${KIE_TOKEN_PASSWORD:-}" ]; then
-                  echo "ERROR: Missing KIE token username or password for password grant"
-                  exit 1
-                fi
-              fi
-
               DNS_WAIT_SECONDS="${DNS_WAIT_SECONDS:-120}"
               DNS_WAIT_INTERVAL="${DNS_WAIT_INTERVAL:-3}"
               HAS_RESOLVER="false"
@@ -1011,23 +998,12 @@ spec:
                 local token start now resp body code
                 start="$(date +%s)"
                 while true; do
-                  if [ "$KIE_TOKEN_GRANT" = "client_credentials" ]; then
-                    resp="$(curl -sS -w '\n%{http_code}' -X POST "${OIDC_AUTH_URL}/realms/${OIDC_REALM}/protocol/openid-connect/token" \
-                      -H "Content-Type: application/x-www-form-urlencoded" \
-                      --data-urlencode "grant_type=client_credentials" \
-                      --data-urlencode "client_id=${KIE_TOKEN_CLIENT_ID}" \
-                      --data-urlencode "client_secret=${KIE_TOKEN_CLIENT_SECRET}" \
-                      || true)"
-                  else
-                    resp="$(curl -sS -w '\n%{http_code}' -X POST "${OIDC_AUTH_URL}/realms/${OIDC_REALM}/protocol/openid-connect/token" \
-                      -H "Content-Type: application/x-www-form-urlencoded" \
-                      --data-urlencode "grant_type=password" \
-                      --data-urlencode "client_id=${KIE_TOKEN_CLIENT_ID}" \
-                      --data-urlencode "client_secret=${KIE_TOKEN_CLIENT_SECRET}" \
-                      --data-urlencode "username=${KIE_TOKEN_USERNAME}" \
-                      --data-urlencode "password=${KIE_TOKEN_PASSWORD}" \
-                      || true)"
-                  fi
+                  resp="$(curl -sS -w '\n%{http_code}' -X POST "${OIDC_AUTH_URL}/realms/${OIDC_REALM}/protocol/openid-connect/token" \
+                    -H "Content-Type: application/x-www-form-urlencoded" \
+                    --data-urlencode "grant_type=client_credentials" \
+                    --data-urlencode "client_id=${KIE_TOKEN_CLIENT_ID}" \
+                    --data-urlencode "client_secret=${KIE_TOKEN_CLIENT_SECRET}" \
+                    || true)"
                   body="$(printf '%s' "$resp" | sed '$d')"
                   code="$(printf '%s' "$resp" | tail -n 1)"
                   # Extract access_token from the JSON response (POSIX BRE capture group is \(...\)).
@@ -1427,11 +1403,11 @@ spec:
               fi
               echo "export OIDC_AUTH_URL=\"$OIDC_AUTH_URL\"" >> "$OIDC_ENV_FILE"
               echo "export OIDC_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_ENABLE_BASIC_AUTH="false"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
               echo "export OIDC_KIE_SERVER_AUTH_URL=\"$OIDC_KIE_SERVER_AUTH_URL\"" >> "$OIDC_ENV_FILE"
               echo "export OIDC_KIE_SERVER_REALM=\"$OIDC_REALM\"" >> "$OIDC_ENV_FILE"
-              echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="true"' >> "$OIDC_ENV_FILE"
+              echo 'export OIDC_KIE_SERVER_ENABLE_BASIC_AUTH="false"' >> "$OIDC_ENV_FILE"
               echo 'export OIDC_KIE_SERVER_BEARER_ONLY="false"' >> "$OIDC_ENV_FILE"
 
               REALM_JSON="$(curl -fsSL "$OIDC_AUTH_URL/realms/$OIDC_REALM")"
@@ -1847,7 +1823,7 @@ spec:
                 configMapKeyRef:
                   name: kie-server-location
                   key: KIE_SERVER_LOCATION
-            - { name: KIE_SERVER_CONTROLLER, value: "http://kie-workbench.drools.svc.cluster.local:8080/business-central/rest/controller" }
+            - { name: KIE_SERVER_CONTROLLER, value: "http://workbench-controller-auth-proxy.drools.svc.cluster.local:8080/business-central/rest/controller" }
             - { name: KIE_MAVEN_REPO,     value: "/opt/jboss/.m2/repository" }
             - { name: KIE_SERVER_EXTENSIONS, value: "BRM,DMN,BPM,CaseMgmt,Planner" }
             - { name: JAEGER_DISABLED, value: "true" }

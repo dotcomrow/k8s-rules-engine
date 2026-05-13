@@ -422,40 +422,6 @@ spec:
                 echo "Updated redirect URIs for $client_id"
               }
 
-              ensure_direct_access_grants() {
-                local client_id="$1"
-                local client_uuid=""
-
-                while IFS= read -r line; do
-                  line=${line%$'\r'}
-                  if [ -z "$line" ] || [ "$line" = "id" ] || [ "$line" = "\"id\"" ]; then
-                    continue
-                  fi
-                  line=${line#\"}
-                  line=${line%\"}
-                  client_uuid="$line"
-                  break
-                done < <($KCADM get clients -r "$REALM" -q "clientId=$client_id" \
-                  --fields id --format csv)
-                if [ -z "$client_uuid" ] || [ "$client_uuid" = "id" ]; then
-                  echo "❌ Keycloak client not found: $client_id"
-                  exit 1
-                fi
-
-                echo "Enabling direct access grants for $client_id"
-                $KCADM update "clients/$client_uuid" -r "$REALM" \
-                  -s "directAccessGrantsEnabled=true" \
-                  -s "standardFlowEnabled=true" \
-                  -s "publicClient=false" \
-                  -s "bearerOnly=false"
-                grants="$($KCADM get "clients/$client_uuid" -r "$REALM" --fields directAccessGrantsEnabled --format csv | tr -d '\r\"' | tail -n1)"
-                if [ "$grants" != "true" ]; then
-                  echo "❌ direct access grants still disabled for $client_id"
-                  exit 1
-                fi
-                echo "Enabled direct access grants for $client_id"
-              }
-
               ensure_service_accounts_enabled() {
                 local client_id="$1"
                 local client_uuid=""
@@ -766,45 +732,6 @@ spec:
                 exit 1
               fi
 
-              find_direct_grant_flow() {
-                local flow=""
-                while IFS= read -r line; do
-                  line=${line%$'\r'}
-                  if [ -z "$line" ] || [ "$line" = "alias" ] || [ "$line" = "\"alias\"" ]; then
-                    continue
-                  fi
-                  line=${line#\"}
-                  line=${line%\"}
-                  case "$line" in
-                    "direct grant"|"direct grant flow"|"direct-grant")
-                      flow="$line"
-                      break
-                      ;;
-                  esac
-                done < <($KCADM get authentication/flows -r "$REALM" --fields alias --format csv)
-                printf '%s' "$flow"
-              }
-
-              enable_direct_grant_flow() {
-                local realm="$1"
-                local current=""
-                current="$($KCADM get "realms/$realm" --fields directGrantFlow --format csv | sed -n '2{s/\r//;s/\"//g;s/,.*//;p;}')"
-                if [ "$current" != "disabled-direct-grant" ] && [ -n "$current" ]; then
-                  echo "Direct grant flow already enabled for $realm: $current"
-                  return 0
-                fi
-                local flow=""
-                flow="$(find_direct_grant_flow)"
-                if [ -z "$flow" ]; then
-                  echo "❌ Direct grant flow not found in realm $realm; leaving disabled"
-                  return 1
-                fi
-                echo "Enabling direct grant flow for $realm: $flow"
-                $KCADM update "realms/$realm" -s "directGrantFlow=$flow" >/dev/null 2>&1 || true
-              }
-
-              enable_direct_grant_flow "$REALM"
-
               ensure_roles_mapper "$WORKBENCH_CLIENT_ID"
               ensure_roles_mapper "$KIE_SERVER_SERVICE_CLIENT_ID"
               ensure_roles_mapper "$KIE_SERVER_CLIENT_ID"
@@ -813,8 +740,6 @@ spec:
               ensure_audience_mapper "$WORKBENCH_CLIENT_ID" "$KIE_SERVER_SERVICE_CLIENT_ID"
               ensure_audience_mapper "$WORKBENCH_CLIENT_ID" "$KIE_SERVER_CLIENT_ID"
               ensure_workbench_redirects "$WORKBENCH_CLIENT_ID"
-              ensure_direct_access_grants "$WORKBENCH_CLIENT_ID"
-              ensure_direct_access_grants "$KIE_SERVER_CLIENT_ID"
               ensure_service_accounts_enabled "$WORKBENCH_CLIENT_ID"
               ensure_service_accounts_enabled "$KIE_SERVER_CLIENT_ID"
               ensure_client_secret "$KIE_SERVER_CLIENT_ID" "$KIE_SERVER_CLIENT_SECRET"

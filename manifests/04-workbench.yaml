@@ -63,6 +63,7 @@ spec:
       serviceAccountName: drools-workbench
       securityContext:
         fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
       volumes:
         - name: workbench-config
           emptyDir: {}

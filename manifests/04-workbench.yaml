@@ -261,12 +261,6 @@ spec:
                   <profile>
                     <id>github</id>
                     <repositories>
-                      <repository>
-                        <id>github</id>
-                        <url>https://maven.pkg.github.com/dotcomrow/rules-packages</url>
-                        <releases><enabled>true</enabled></releases>
-                        <snapshots><enabled>true</enabled></snapshots>
-                      </repository>
                       ${EXTRA_REPO_BLOCKS}
                       <repository>
                         <id>central</id>
@@ -276,12 +270,6 @@ spec:
                       </repository>
                     </repositories>
                     <pluginRepositories>
-                      <pluginRepository>
-                        <id>github</id>
-                        <url>https://maven.pkg.github.com/dotcomrow/rules-packages</url>
-                        <releases><enabled>true</enabled></releases>
-                        <snapshots><enabled>true</enabled></snapshots>
-                      </pluginRepository>
                       ${EXTRA_PLUGIN_REPO_BLOCKS}
                       <pluginRepository>
                         <id>central</id>
@@ -732,8 +720,6 @@ spec:
                 -Dorg.uberfire.ext.security.management.keycloak.authServer=https://auth.suncoast.systems
                 -Dorg.uberfire.ext.security.management.keycloak.use-resource-role-mappings=true
                 -Dorg.kie.maven.settings.custom=/opt/jboss/.m2/settings.xml
-                -Dorg.guvnor.m2repo.id=github
-                -Dorg.guvnor.m2repo.url=https://maven.pkg.github.com/dotcomrow/rules-packages
             - name: JAVA_OPTS_APPEND
               value: >-
                 -Djboss.logging.level.org.keycloak.adapters=DEBUG

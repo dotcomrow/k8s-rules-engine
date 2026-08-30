@@ -758,22 +758,22 @@ spec:
             - { name: workbench-m2,      mountPath: /opt/jboss/.m2 }
           startupProbe:
             httpGet:
-              path: /business-central/
-              port: 8080
+              path: /health
+              port: 9990
             periodSeconds: 15
             timeoutSeconds: 10
             failureThreshold: 80
           readinessProbe:
             httpGet:
-              path: /business-central/
-              port: 8080
+              path: /health
+              port: 9990
             periodSeconds: 15
             timeoutSeconds: 10
             failureThreshold: 4
           livenessProbe:
             httpGet:
-              path: /business-central/
-              port: 8080
+              path: /health
+              port: 9990
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 6

@@ -757,22 +757,34 @@ spec:
             - { name: workbench-niogit,  mountPath: /opt/jboss/.niogit }
             - { name: workbench-m2,      mountPath: /opt/jboss/.m2 }
           startupProbe:
-            httpGet:
-              path: /health
-              port: 9990
+            exec:
+              command:
+                - /bin/bash
+                - -lc
+                - |
+                  body="$(curl -sS --max-time 5 http://127.0.0.1:9990/health/ready || true)"
+                  printf '%s\n' "$body" | grep -q '"server-state"'
+                  printf '%s\n' "$body" | grep -q '"running"'
+                  printf '%s\n' "$body" | grep -q '"business-central.war" : "OK"'
             periodSeconds: 15
             timeoutSeconds: 10
             failureThreshold: 80
           readinessProbe:
-            httpGet:
-              path: /health
-              port: 9990
+            exec:
+              command:
+                - /bin/bash
+                - -lc
+                - |
+                  body="$(curl -sS --max-time 5 http://127.0.0.1:9990/health/ready || true)"
+                  printf '%s\n' "$body" | grep -q '"server-state"'
+                  printf '%s\n' "$body" | grep -q '"running"'
+                  printf '%s\n' "$body" | grep -q '"business-central.war" : "OK"'
             periodSeconds: 15
             timeoutSeconds: 10
             failureThreshold: 4
           livenessProbe:
             httpGet:
-              path: /health
+              path: /health/live
               port: 9990
             periodSeconds: 30
             timeoutSeconds: 10
